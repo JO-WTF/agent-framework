@@ -34,19 +34,7 @@ async def run_python(code: str) -> str:
     except Exception:
         return f"代码报错:\n{traceback.format_exc()}"
 
-# 3. 模拟业务：查询客户订单
-@tool(description=PROMPTS["tools"]["query_customer_order"])
-async def query_customer_order(order_id: str) -> str:
-    logger.info(f"📦 \033[93m[触发工具: 客单查询(PO)] -> {order_id}\033[0m")
-    return f"客户订单 {order_id} 状态：已确认，工厂排产中。"
-
-# 4. 模拟业务：查询运输订单 (带有黑话对齐)
-@tool(description=PROMPTS["tools"]["query_transport_order"])
-async def query_transport_order(order_id: str) -> str:
-    logger.info(f"🚚 \033[93m[触发工具: 物流查询(DN)] -> {order_id}\033[0m")
-    return f"运输订单 {order_id} 状态：已发车，预计明天送达。"
-
-# 5. CLI 终端执行工具
+# 3. CLI 终端执行工具
 @tool(description=PROMPTS["tools"]["run_command"])
 async def run_command(command: str) -> str:
     logger.info(f"💻 \033[95m[触发工具: 执行命令] -> {command}\033[0m")
@@ -78,4 +66,4 @@ async def run_command(command: str) -> str:
         return f"执行失败: {str(e)}"
 
 # 导出工具集
-AGENT_TOOLS = [search_web, run_python, query_customer_order, query_transport_order, run_command]
+AGENT_TOOLS = [search_web, run_python, run_command]

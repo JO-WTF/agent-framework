@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from config import AgentState, StreamingConsoleCallback
-from nodes import agent_reasoning_node, tools_execution_node, evaluate_response_node
+from nodes import orchestrator_node, agent_reasoning_node, tools_execution_node, evaluate_response_node
 from logger import logger
 
 # ----------------- 路由裁判逻辑 -----------------
@@ -21,19 +21,25 @@ def route_after_evaluation(state: AgentState) -> str:
     """质检完去哪儿？通过就结束，不通过就回大脑"""
     if state["eval_status"] == "PASS": 
         return "end"
-    return "agent"
+    return "orchestrator"
+
+def route_after_orchestration(state: AgentState) -> str:
+    """编排节点判断下一步：继续行动还是进入质检"""
+    return state.get("orchestrator_next", "agent")
 
 # ----------------- 图的组装 -----------------
 def build_agent_graph():
     workflow = StateGraph(AgentState)
+    workflow.add_node("orchestrator", orchestrator_node)
     workflow.add_node("agent", agent_reasoning_node)
     workflow.add_node("tools", tools_execution_node)
     workflow.add_node("evaluate", evaluate_response_node)
 
-    workflow.add_edge(START, "agent")
-    workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", "evaluate": "evaluate"})
-    workflow.add_edge("tools", "agent")  # 工具执行完必须回大脑读取结果
-    workflow.add_conditional_edges("evaluate", route_after_evaluation, {"end": END, "agent": "agent"})
+    workflow.add_edge(START, "orchestrator")
+    workflow.add_conditional_edges("orchestrator", route_after_orchestration, {"agent": "agent", "evaluate": "evaluate"})
+    workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", "evaluate": "orchestrator"})
+    workflow.add_edge("tools", "orchestrator")  # 工具执行完回编排节点，先更新 todo 再继续思考
+    workflow.add_conditional_edges("evaluate", route_after_evaluation, {"end": END, "orchestrator": "orchestrator"})
 
     return workflow.compile(checkpointer=MemorySaver())
 
@@ -65,7 +71,14 @@ async def main():
             continue
 
         memory_messages.append(HumanMessage(content=user_input))
-        initial_input = {"messages": memory_messages, "revision_count": 0}
+        initial_input = {
+            "messages": memory_messages,
+            "revision_count": 0,
+            "eval_status": "",
+            "task_complexity": "unknown",
+            "todo_list": [],
+            "orchestrator_next": "agent",
+        }
 
         try:
             final_state = await agent_app.ainvoke(initial_input, config)

@@ -2,8 +2,8 @@ import os
 import sys
 import yaml
 import httpx
-from typing import Annotated
-from typing_extensions import TypedDict
+from typing import Annotated, Any
+from typing_extensions import NotRequired, TypedDict
 from dotenv import load_dotenv
 from tavily import TavilyClient
 from langchain_openai import ChatOpenAI
@@ -19,7 +19,10 @@ with open("prompts.yaml", "r", encoding="utf-8") as f:
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages] 
     revision_count: int  
-    eval_status: str     
+    eval_status: str
+    task_complexity: NotRequired[str]
+    todo_list: NotRequired[list[dict[str, Any]]]
+    orchestrator_next: NotRequired[str]
 
 # 控制台绚丽日志回调
 class StreamingConsoleCallback(AsyncCallbackHandler):
