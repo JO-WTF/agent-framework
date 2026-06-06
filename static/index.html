@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Console</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>Agent Console</h1>
+          <p>LangGraph agent 运行控制台</p>
+        </div>
+        <div class="topbar-actions">
+          <span id="connectionBadge" class="badge neutral">连接中</span>
+          <span id="statusBadge" class="badge idle">空闲</span>
+          <button id="stopBtn" class="button danger" type="button" disabled>停止任务</button>
+          <button id="clearBtn" class="button ghost" type="button">清空</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="panel chat-panel">
+          <div class="panel-header">
+            <h2>对话</h2>
+          </div>
+          <div id="messageList" class="message-list"></div>
+          <form id="chatForm" class="composer">
+            <textarea id="messageInput" rows="4" placeholder="输入任务或问题..."></textarea>
+            <button id="sendBtn" class="button primary" type="submit">发送</button>
+          </form>
+        </section>
+
+        <section class="panel runtime-panel">
+          <div class="panel-header">
+            <h2>实时运行</h2>
+            <span id="nodeBadge" class="badge neutral">无节点</span>
+          </div>
+
+          <div class="runtime-section">
+            <div class="section-title">模型输出</div>
+            <pre id="modelOutput" class="model-output">等待模型输出...</pre>
+          </div>
+
+          <div class="runtime-section timeline-wrap">
+            <div class="section-title">节点事件</div>
+            <div id="eventList" class="event-list"></div>
+          </div>
+        </section>
+
+        <aside class="panel progress-panel">
+          <div class="panel-header">
+            <h2>进度</h2>
+          </div>
+
+          <div class="summary-grid">
+            <div class="summary-card">
+              <span>复杂度</span>
+              <strong id="complexityValue">unknown</strong>
+            </div>
+            <div class="summary-card">
+              <span>当前节点</span>
+              <strong id="currentNodeValue">-</strong>
+            </div>
+          </div>
+
+          <div class="runtime-section todo-wrap">
+            <div class="section-title">Todo 进度</div>
+            <div id="todoList" class="todo-list empty">暂无 todo</div>
+          </div>
+
+          <div class="runtime-section tools-wrap">
+            <div class="section-title">Tool 调用</div>
+            <div id="toolList" class="tool-list empty">暂无 tool 调用</div>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

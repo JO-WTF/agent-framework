@@ -111,6 +111,10 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
         todo_list = state.get("todo_list", [])
         next_node = _default_orchestrator_next(state)
 
+    # 如果 Agent 已经给出自然语言回复且没有继续调用工具，必须进入质检。
+    # 这里用确定性路由兜底，避免 Orchestrator LLM 误判后再次回到 Agent 造成重复回答。
+    next_node = _default_orchestrator_next(state) if _default_orchestrator_next(state) == "evaluate" else next_node
+
     if todo_list:
         logger.info("\n".join(["📋 \033[94m[Todo]\033[0m"] + _format_todo_items(todo_list)))
     else:

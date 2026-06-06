@@ -2,10 +2,16 @@
 
 ```mermaid
 flowchart LR
-    User["用户<br/>终端输入"] --> CLI["main.py<br/>命令行交互层"]
+    User["用户"] --> CLI["main.py<br/>命令行交互层"]
+    User --> Browser["浏览器<br/>static Web UI"]
+    Browser --> WebApp["web_app.py<br/>FastAPI / WebSocket"]
 
     CLI --> Memory["memory_messages<br/>短期会话记忆"]
     CLI --> Graph["LangGraph StateGraph<br/>AgentState"]
+    WebApp --> Memory
+    WebApp --> Graph
+    WebApp --> WebState["Web 会话状态<br/>status / model_output / tool_runs / events"]
+    WebState -->|"WS /ws 实时推送"| Browser
 
     subgraph State["AgentState"]
         Messages["messages<br/>Human / AI / Tool messages"]
@@ -38,7 +44,9 @@ flowchart LR
     Router2 -->|"PASS"| Final["最终回答"]
     Router2 -->|"REJECT"| Orchestrator
     Final --> CLI
+    Final --> WebApp
     CLI --> User
+    WebApp --> Browser
 
     subgraph Config["配置与提示词"]
         Env[".env<br/>LLM_PROVIDER / MODEL / API_KEY / TAVILY_API_KEY"]
@@ -79,14 +87,6 @@ flowchart LR
     Search --> Tavily
     Command --> Shell
 
-    subgraph Data["本地数据"]
-        TSLA["TSLA_12month_daily.csv"]
-        WTI["WTI_Crude_Oil_12month_daily.csv"]
-        Brent["Brent_Crude_Oil_12month_daily.csv"]
-    end
-
-    Python -. "可读取分析" .-> Data
-    Command -. "可读取文件" .-> Data
 ```
 
 ## 图例说明
@@ -97,4 +97,3 @@ flowchart LR
 - `ToolNode` 根据模型生成的 tool call 自动执行 `tools.py` 中的工具。
 - `Evaluator` 负责最终质量检查，不通过会回到 `Orchestrator` 重新规划。
 - `.env`、`prompts.yaml`、`logging.yaml` 分别控制模型配置、提示词策略和日志输出。
-- CSV 数据当前没有专用数据工具，主要通过 `run_python` 或 `run_command` 间接访问。

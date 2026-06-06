@@ -8,7 +8,8 @@
 
 | 层级 | 文件 | 职责 |
 | --- | --- | --- |
-| 入口与编排 | `main.py` | 启动命令行交互，组装 LangGraph 状态图，维护会话记忆和线程 ID |
+| CLI 入口 | `main.py` | 启动命令行交互，组装 LangGraph 状态图，维护会话记忆和线程 ID |
+| Web UI | `web_app.py` / `static/` | 提供浏览器对话界面、停止任务、todo 进度、模型输出和 tool 运行状态 |
 | 节点逻辑 | `nodes.py` | 定义 Orchestrator、Agent Brain、ToolNode、Evaluator 四类节点 |
 | 工具层 | `tools.py` | 定义可被大模型调用的工具函数，例如搜索、Python 执行、命令执行 |
 | 配置层 | `config.py` | 加载 `.env` 和 `prompts.yaml`，初始化 LLM、搜索客户端、状态结构和流式回调 |
@@ -118,7 +119,24 @@ class AgentState(TypedDict):
 
 工具描述来自 `prompts.yaml` 的 `tools` 配置。因为描述会直接影响模型何时调用工具，所以新增工具时要同时维护代码和提示词。
 
-### 4.4 `config.py`
+### 4.4 `web_app.py` 和 `static/`
+
+Web UI 是一个轻量 FastAPI 应用，复用同一个 LangGraph agent：
+
+- `GET /`：加载浏览器控制台页面。
+- `GET /api/state`：返回当前会话快照。
+- `POST /api/chat`：提交一条用户消息并启动 agent 任务。
+- `POST /api/stop`：取消当前正在运行的任务。
+- `POST /api/clear`：清空当前 Web 会话状态。
+- `WS /ws`：实时推送状态快照和运行事件。
+
+前端三栏布局：
+
+- 左侧：对话历史和输入框。
+- 中间：模型流式输出、节点事件时间线。
+- 右侧：分级 todo 状态、当前节点、复杂度、tool 调用状态和结果。
+
+### 4.5 `config.py`
 
 主要职责：
 
@@ -139,7 +157,7 @@ class AgentState(TypedDict):
 | `llamacpp` | 默认 base url 为 `http://localhost:8080/v1` |
 | 其他值 | 使用 `LLM_API_KEY` 和可选 `LLM_BASE_URL` 作为 OpenAI 兼容服务 |
 
-### 4.5 `prompts.yaml`
+### 4.6 `prompts.yaml`
 
 提示词分为三类：
 
@@ -164,15 +182,23 @@ class AgentState(TypedDict):
 
 不要把真实 `.env` 提交到公开仓库。当前仓库中 `.gitignore` 已忽略 `.env` 和 `.venv`。
 
-## 6. 数据文件
+## 6. 启动方式
 
-项目根目录包含三份 CSV 数据：
+命令行模式：
 
-- `TSLA_12month_daily.csv`
-- `WTI_Crude_Oil_12month_daily.csv`
-- `Brent_Crude_Oil_12month_daily.csv`
+```bash
+source .venv/bin/activate
+python main.py
+```
 
-当前代码没有专门的数据读取工具，模型如果需要分析这些文件，通常会通过 `run_python` 或 `run_command` 间接读取。后续如果数据分析是主要场景，建议新增结构化数据工具，例如 `analyze_csv(file_name, question)`，把可访问文件白名单、字段解释和常用统计逻辑固化下来。
+Web UI 模式：
+
+```bash
+source .venv/bin/activate
+uvicorn web_app:app --host 127.0.0.1 --port 8000
+```
+
+然后在浏览器打开 `http://127.0.0.1:8000`。
 
 ## 7. 如何扩展一个新工具
 
@@ -214,7 +240,6 @@ AGENT_TOOLS = [
 | `.venv` 来自压缩包 | 当前 `.venv` 里包含 Windows 风格路径和 `.exe/.pyd` 文件，在 macOS 上可能不可用 | 在 macOS 本地重新创建虚拟环境并安装依赖 |
 | 缺少依赖清单 | 没有 `requirements.txt` 或 `pyproject.toml` | 补充依赖文件，保证环境可复现 |
 | Evaluator 只做文本判断 | 质检结果依赖另一次 LLM 判断，可能误判 | 为关键业务引入确定性校验，例如工具调用结果是否存在、todo 是否全部完成 |
-| 数据工具不结构化 | CSV 分析依赖模型自行写代码 | 封装 CSV 读取、字段校验、统计分析等专用工具 |
 | 搜索结果较少 | `search_web` 只返回 3 条摘要 | 根据任务类型支持更多结果、URL、发布时间和来源可信度 |
 
 ## 9. 推荐演进方向
