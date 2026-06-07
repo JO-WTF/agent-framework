@@ -65,6 +65,9 @@ class AgentState(TypedDict):
     task_complexity: NotRequired[str]
     todo_list: NotRequired[list[dict[str, Any]]]
     orchestrator_next: NotRequired[str]
+    orchestrator_think: NotRequired[str]
+    orchestrator_message: NotRequired[str]
+    orchestrator_prompt: NotRequired[list[dict[str, str]]]
 ```
 
 字段说明：
@@ -78,6 +81,9 @@ class AgentState(TypedDict):
 | `task_complexity` | Orchestrator 判断出的任务复杂度，通常是 `simple` 或 `complex` |
 | `todo_list` | 复杂任务的分级 todo list，每项包含 `id`、`title`、`status`、`note`、`children` |
 | `orchestrator_next` | Orchestrator 决定的下一节点，取值为 `agent` 或 `evaluate` |
+| `orchestrator_think` | Orchestrator 大模型决策时的思考过程（`<think>` 标签内容） |
+| `orchestrator_message` | Orchestrator 决策输出的原始 JSON 结果（去除了思考过程） |
+| `orchestrator_prompt` | Orchestrator 运行时的上下文提示词与输入（系统提示 + 任务背景） |
 
 `app/cli.py` 额外维护了一个 `memory_messages` 列表，作为命令行会话层面的短期记忆。用户输入会追加为 `HumanMessage`，最终回答会追加回该列表，下一轮继续带入上下文。
 

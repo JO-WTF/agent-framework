@@ -130,9 +130,13 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     revision_count: int
     eval_status: str
+    session_id: NotRequired[str]
     task_complexity: NotRequired[str]
     todo_list: NotRequired[list[dict[str, Any]]]
     orchestrator_next: NotRequired[str]
+    orchestrator_think: NotRequired[str]
+    orchestrator_message: NotRequired[str]
+    orchestrator_prompt: NotRequired[list[dict[str, str]]]
 ```
 
 字段说明：
@@ -140,9 +144,13 @@ class AgentState(TypedDict):
 - `messages`：LangGraph 对话消息列表，使用 `add_messages` 自动累积新消息。
 - `revision_count`：Evaluator 打回重做次数。
 - `eval_status`：当前质量检查结果，`PASS` 或 `REJECT`。
+- `session_id`：会话隔离标识，用于数据存储与事件隔离。
 - `task_complexity`：任务复杂度，`simple`、`complex` 或 `unknown`。
 - `todo_list`：复杂任务的分级 todo list，每项包含 `id`、`title`、`status`、`note`、`children`。
 - `orchestrator_next`：Orchestrator 决定的下一步节点，`agent` 或 `evaluate`。
+- `orchestrator_think`：Orchestrator 大模型决策时的思考过程（`<think>` 标签内容）。
+- `orchestrator_message`：Orchestrator 决策输出的原始 JSON 结果（去除了思考过程）。
+- `orchestrator_prompt`：Orchestrator 运行时的上下文提示词与输入。
 
 ## 模块职责
 
