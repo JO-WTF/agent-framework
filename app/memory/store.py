@@ -213,6 +213,9 @@ def trim_messages(messages: list[Any], keep_recent: int = DEFAULT_MESSAGE_WINDOW
             seen_ids.add(id(message))
             continue
         content = getattr(message, "content", "")
+        # Avoid preserving old summary messages to prevent duplicates/nesting in history
+        if isinstance(message, HumanMessage) and content.startswith("【自动压缩早期对话】"):
+            continue
         if pattern.search(content):
             preserved.append(message)
             seen_ids.add(id(message))
@@ -229,6 +232,8 @@ def trim_messages(messages: list[Any], keep_recent: int = DEFAULT_MESSAGE_WINDOW
             current_session = get_session_id()
             if current_session:
                 archive_messages(omitted, session_id=current_session)
-        preserved.append(_build_summary_message(omitted))
+        # Place the summary message at the start of the list to prevent breaking tool_calls -> tool adjacency
+        return [_build_summary_message(omitted)] + preserved + recent_messages
 
     return preserved + recent_messages
+

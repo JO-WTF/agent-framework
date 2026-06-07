@@ -199,6 +199,8 @@ class WebConsoleCallback(AsyncCallbackHandler):
 
     async def on_llm_start(self, serialized, prompts, **kwargs):
         self.session.state["current_node"] = "agent"
+        if self.session.state["model_output"]:
+            self.session.state["model_output"] += "\n\n--- [下一轮模型输出] ---\n\n"
         await self.session.start_node_llm_run("agent", prompts)
 
     async def on_llm_new_token(self, token: str, **kwargs) -> None:
@@ -227,7 +229,7 @@ class WebConsoleCallback(AsyncCallbackHandler):
         self.session.state["current_node"] = "tools"
         await self.session.publish({
             "type": "tool_start",
-            "title": f"调用工具 {name}",
+            "title": f"调用工具: {name} (运行中...)",
             "tool": run,
             "details": {"tool": name, "input": input_str, "status": "running"},
         })
@@ -239,12 +241,34 @@ class WebConsoleCallback(AsyncCallbackHandler):
             run["status"] = "success"
             run["output"] = output_content
             run["ended_at"] = datetime.now().strftime("%H:%M:%S")
-            await self.session.publish({
-                "type": "tool_end",
-                "title": f"工具完成 {run['name']}",
-                "tool": run,
-                "details": {"tool": run["name"], "input": run["input"], "output": run["output"], "status": "success"},
-            })
+
+            events = self.session.state["events"]
+            last_event = None
+            for e in reversed(events):
+                if e.get("type") == "tool_start" and e.get("details", {}).get("tool") == run["name"]:
+                    last_event = e
+                    break
+
+            if last_event:
+                last_event["type"] = "tool_end"
+                last_event["title"] = f"工具完成: {run['name']}"
+                last_event["updated_at"] = run["ended_at"]
+                last_event["tool"] = run
+                last_event["details"] = {
+                    "tool": run["name"],
+                    "input": run["input"],
+                    "output": run["output"],
+                    "status": "success",
+                }
+                append_session_event(self.session.session_id, last_event)
+                await self.session.broadcast(last_event)
+            else:
+                await self.session.publish({
+                    "type": "tool_end",
+                    "title": f"工具完成: {run['name']}",
+                    "tool": run,
+                    "details": {"tool": run["name"], "input": run["input"], "output": run["output"], "status": "success"},
+                })
 
     async def on_tool_error(self, error, **kwargs):
         if self.session.state["tool_runs"]:
@@ -252,12 +276,34 @@ class WebConsoleCallback(AsyncCallbackHandler):
             run["status"] = "error"
             run["output"] = str(error)
             run["ended_at"] = datetime.now().strftime("%H:%M:%S")
-            await self.session.publish({
-                "type": "tool_error",
-                "title": f"工具失败 {run['name']}",
-                "tool": run,
-                "details": {"tool": run["name"], "input": run["input"], "error": run["output"], "status": "error"},
-            })
+
+            events = self.session.state["events"]
+            last_event = None
+            for e in reversed(events):
+                if e.get("type") == "tool_start" and e.get("details", {}).get("tool") == run["name"]:
+                    last_event = e
+                    break
+
+            if last_event:
+                last_event["type"] = "tool_error"
+                last_event["title"] = f"工具失败: {run['name']}"
+                last_event["updated_at"] = run["ended_at"]
+                last_event["tool"] = run
+                last_event["details"] = {
+                    "tool": run["name"],
+                    "input": run["input"],
+                    "error": run["output"],
+                    "status": "error",
+                }
+                append_session_event(self.session.session_id, last_event)
+                await self.session.broadcast(last_event)
+            else:
+                await self.session.publish({
+                    "type": "tool_error",
+                    "title": f"工具失败: {run['name']}",
+                    "tool": run,
+                    "details": {"tool": run["name"], "input": run["input"], "error": run["output"], "status": "error"},
+                })
 
 
 def serialize_message(message: Any) -> dict[str, Any]:
@@ -341,7 +387,11 @@ async def run_agent(user_text: str, session: ConsoleSession, session_id: str | N
                         and last_event.get("node") == node_name):
                     details = last_event.setdefault("details", {})
                     details["update"] = make_json_safe(node_update)
-                    last_event["title"] = f"节点更新: {node_name}"
+                    if node_name == "agent" and "llm_run" in details:
+                        token_count = details["llm_run"].get("token_count", 0)
+                        last_event["title"] = f"节点更新: agent (模型调用完成, {token_count} tokens)"
+                    else:
+                        last_event["title"] = f"节点更新: {node_name}"
                     last_event["updated_at"] = datetime.now().strftime("%H:%M:%S")
                     append_session_event(session.session_id, last_event)
                     await session.broadcast(last_event)
@@ -394,13 +444,6 @@ async def run_agent(user_text: str, session: ConsoleSession, session_id: str | N
                 for message in node_update.get("messages", []):
                     if isinstance(message, AIMessage) and not getattr(message, "tool_calls", None):
                         final_reply = message
-                    if isinstance(message, ToolMessage):
-                        await session.publish({
-                            "type": "tool_message",
-                            "title": "工具结果已写入上下文",
-                            "content": message.content,
-                            "details": serialize_message(message),
-                        })
 
         if final_reply:
             session.memory_messages.append(final_reply)
@@ -488,9 +531,37 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             payload = await queue.get()
+            if payload is None:
+                break
             await websocket.send_json(payload)
     except asyncio.CancelledError:
-        session.subscribers.discard(queue)
-        return
+        pass
     except WebSocketDisconnect:
+        pass
+    finally:
         session.subscribers.discard(queue)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Cancel only our session running tasks to allow immediate uvicorn reload
+    tasks = []
+    for session in manager.sessions.values():
+        if session.running_task and not session.running_task.done():
+            session.running_task.cancel()
+            tasks.append(session.running_task)
+        # Feed None to all subscriber queues to unblock websocket tasks
+        for q in list(session.subscribers):
+            try:
+                q.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+# reload test comment v4
+
+
+
+
+

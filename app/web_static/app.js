@@ -39,6 +39,8 @@ const ROUTE_GROUPS = [
 ];
 let mermaidModulePromise;
 let routeRenderVersion = 0;
+let lastRenderedDefinition = "";
+
 
 if (window.marked) {
   const renderer = new marked.Renderer();
@@ -755,15 +757,17 @@ async function renderMermaidRouteDiagram(definition, version) {
   try {
     const mermaid = await loadMermaid();
     if (version !== routeRenderVersion) return;
-    const { svg } = await mermaid.render("routeGraph", definition);
+    // Use a unique ID for each render to prevent DOM collisions during concurrent runs
+    const { svg } = await mermaid.render("routeGraph_" + version, definition);
     if (version !== routeRenderVersion) return;
     const diagram = els.routeList.querySelector(".route-diagram");
     if (diagram) {
       diagram.innerHTML = svg;
       const renderedSvg = diagram.querySelector("svg");
       if (renderedSvg) {
-        renderedSvg.removeAttribute("height");
-        renderedSvg.removeAttribute("width");
+        // Set to '100%' instead of removing to avoid WebKit/Safari console warnings about empty width/height
+        renderedSvg.setAttribute("width", "100%");
+        renderedSvg.setAttribute("height", "100%");
         renderedSvg.style.maxWidth = "100%";
         renderedSvg.style.maxHeight = "100%";
         renderedSvg.style.width = "100%";
@@ -772,6 +776,7 @@ async function renderMermaidRouteDiagram(definition, version) {
       diagram.classList.remove("loading");
     }
   } catch (error) {
+    lastRenderedDefinition = ""; // Reset on error to allow retry
     const notice = els.routeList.querySelector(".route-library-error");
     if (notice) {
       notice.textContent = `Mermaid 加载失败：${error.message}`;
@@ -785,6 +790,13 @@ function renderRoutes(state) {
   const visited = collectVisitedRoutes(state);
   const edgeLabels = collectRouteEdgeLabels(state);
   const mermaidDefinition = buildRouteMermaidDefinition(active, visited, edgeLabels);
+
+  // Skip rendering if the definition has not changed
+  if (mermaidDefinition === lastRenderedDefinition) {
+    return;
+  }
+  lastRenderedDefinition = mermaidDefinition;
+
   const renderVersion = ++routeRenderVersion;
 
   els.routeList.innerHTML = `
