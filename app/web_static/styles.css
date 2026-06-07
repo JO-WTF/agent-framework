@@ -299,7 +299,7 @@ textarea {
 
 .timeline-wrap,
 .todo-wrap,
-.tools-wrap {
+.route-wrap {
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -313,7 +313,7 @@ textarea {
 }
 
 .event-list,
-.tool-list,
+.route-list,
 .todo-list {
   display: flex;
   flex-direction: column;
@@ -321,7 +321,6 @@ textarea {
 }
 
 .event-row,
-.tool-row,
 .todo-row {
   padding: 10px 11px;
   border: 1px solid var(--border);
@@ -535,7 +534,6 @@ textarea {
 }
 
 .event-meta,
-.tool-meta,
 .todo-meta {
   display: flex;
   align-items: center;
@@ -544,31 +542,15 @@ textarea {
 }
 
 .event-title,
-.tool-title,
 .todo-title {
   font-size: 12px;
   font-weight: 700;
 }
 
 .event-time,
-.tool-time,
 .todo-note {
   color: var(--muted);
   font-size: 11px;
-}
-
-.tool-output {
-  margin-top: 8px;
-  padding: 9px;
-  max-height: 120px;
-  overflow: auto;
-  border-radius: 6px;
-  background: var(--surface-soft);
-  color: #24324a;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
 }
 
 .summary-grid {
@@ -616,6 +598,49 @@ textarea {
 .empty {
   color: var(--muted);
   font-size: 13px;
+}
+
+.route-list {
+  gap: 12px;
+}
+
+.route-diagram {
+  min-height: 250px;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  overflow: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.route-diagram svg {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  min-width: 280px;
+}
+
+.route-diagram.loading {
+  align-items: center;
+}
+
+.route-library-error {
+  padding: 8px 10px;
+  border: 1px solid #ffd0cb;
+  border-radius: 8px;
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.route-library-error.hidden {
+  display: none;
 }
 
 @media (max-width: 1100px) {

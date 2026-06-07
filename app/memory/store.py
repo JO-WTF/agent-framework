@@ -6,10 +6,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-ROOT_DIR = Path(__file__).resolve().parent
-DATA_DIR = ROOT_DIR / ".data"
-GLOBAL_DATA_DIR = DATA_DIR / "global"
-SESSIONS_DATA_DIR = DATA_DIR / "sessions"
+from app.runtime_paths import GLOBAL_DATA_DIR, ROOT_DIR, ensure_runtime_dirs, get_session_file_path
 
 STATIC_GUIDELINES_FILE = ROOT_DIR / "CLAUDE.md"
 GLOBAL_AGENT_MEMORY_FILE = GLOBAL_DATA_DIR / "agent_memory.json"
@@ -24,22 +21,7 @@ MAX_NOTE_SUMMARY_CHARS = 200
 
 def _ensure_dirs() -> None:
     """Create data directories if they don't exist."""
-    GLOBAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SESSIONS_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _get_session_dir(session_id: str | None) -> Path:
-    """Get the data directory for a specific session."""
-    if not session_id:
-        raise ValueError("session_id is required")
-    return SESSIONS_DATA_DIR / session_id
-
-
-def _get_session_file_path(session_id: str | None, filename: str) -> Path:
-    """Get the file path for a session-specific data file."""
-    session_dir = _get_session_dir(session_id)
-    session_dir.mkdir(parents=True, exist_ok=True)
-    return session_dir / filename
+    ensure_runtime_dirs()
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -104,8 +86,8 @@ def store_tool_result(tool_name: str, raw_output: str, session_id: str | None = 
     """Store tool result in session-specific directory."""
     if not session_id:
         raise ValueError("session_id is required for tool result storage")
-    
-    tool_results_file = _get_session_file_path(session_id, "tool_results.json")
+
+    tool_results_file = get_session_file_path(session_id, "tool_results.json")
     records = _read_json(tool_results_file, [])
     ref_id = f"tool-{len(records) + 1:04d}"
     payload = {
@@ -156,8 +138,8 @@ def archive_messages(messages: list[Any], session_id: str | None = None) -> str:
         return ""
     if not session_id:
         raise ValueError("session_id is required for message archival")
-    
-    archive_file = _get_session_file_path(session_id, "conversation_archive.json")
+
+    archive_file = get_session_file_path(session_id, "conversation_archive.json")
     history = _read_json(archive_file, [])
     archive_id = f"archive-{len(history) + 1:04d}"
     payload = {
@@ -168,6 +150,32 @@ def archive_messages(messages: list[Any], session_id: str | None = None) -> str:
     history.insert(0, payload)
     _write_json(archive_file, history[:MAX_ARCHIVE_RECORDS])
     return archive_id
+
+
+def append_session_event(session_id: str | None, event: dict[str, Any]) -> None:
+    """Persist a web-console event to a session-specific JSONL log."""
+    if not session_id:
+        raise ValueError("session_id is required for session event logging")
+
+    event_file = get_session_file_path(session_id, "events.jsonl")
+    payload = {
+        "created_at": datetime.now().isoformat(),
+        **event,
+    }
+    with event_file.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(make_json_safe_for_storage(payload), ensure_ascii=False) + "\n")
+
+
+def make_json_safe_for_storage(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): make_json_safe_for_storage(val) for key, val in value.items()}
+    if isinstance(value, list | tuple):
+        return [make_json_safe_for_storage(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (AIMessage, HumanMessage, ToolMessage)):
+        return _serialize_message(value)
+    return str(value)
 
 
 def _build_summary_message(messages: list[Any]) -> HumanMessage:
@@ -217,7 +225,7 @@ def trim_messages(messages: list[Any], keep_recent: int = DEFAULT_MESSAGE_WINDOW
             archive_messages(omitted, session_id=session_id)
         else:
             # For backward compatibility, try to use context session_id
-            from tools import get_session_id
+            from app.tools.context import get_session_id
             current_session = get_session_id()
             if current_session:
                 archive_messages(omitted, session_id=current_session)

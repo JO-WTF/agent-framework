@@ -8,25 +8,27 @@
 
 | 层级 | 文件 | 职责 |
 | --- | --- | --- |
-| CLI 入口 | `main.py` | 启动命令行交互，组装 LangGraph 状态图，维护会话记忆和线程 ID |
-| Web UI | `web_app.py` / `static/` | 提供浏览器对话界面、停止任务、todo 进度、模型输出和 tool 运行状态 |
-| 节点逻辑 | `nodes.py` | 定义 Orchestrator、Agent Brain、ToolNode、Evaluator 四类节点 |
-| 工具层 | `tools.py` | 定义可被大模型调用的工具函数，例如搜索、Python 执行、命令执行 |
-| 配置层 | `config.py` | 加载 `.env` 和 `prompts.yaml`，初始化 LLM、搜索客户端、状态结构和流式回调 |
-| 日志层 | `logger.py` / `logging.yaml` | 统一控制台日志格式、日志等级和输出目标 |
+| CLI 入口 | `app/cli.py` | 启动命令行交互，组装 LangGraph 状态图，维护会话记忆和线程 ID |
+| Web UI | `app/web.py` / `app/web_static/` | 提供浏览器对话界面、停止任务、todo 进度、模型输出和 tool 运行状态 |
+| 节点逻辑 | `app/nodes/` | 定义 Orchestrator、Agent Brain、ToolNode、Evaluator 四类节点 |
+| 工具层 | `app/tools/` | 定义可被大模型调用的工具函数，例如搜索、Python 执行、命令执行 |
+| 配置层 | `app/config.py` | 加载 `.env` 和 `config/prompts.yaml`，初始化 LLM、搜索客户端、状态结构和流式回调 |
+| 日志层 | `app/logging_config.py` / `config/logging.yaml` | 统一控制台日志格式、日志等级和输出目标 |
+| 运行期数据 | `app/runtime_paths.py` / `.data/` | 统一管理全局记忆、会话归档、工具输出和 Web 事件日志 |
 
 运行时，用户在终端输入问题，系统把问题加入 `AgentState.messages`，再交给 LangGraph 状态图驱动。Orchestrator 会先判断任务复杂度；如果是复杂任务，会生成支持分级的 `todo_list`。Agent Brain 后续会带着 todo 上下文推理和行动。工具执行后先回到 Orchestrator 更新 todo 状态，再继续交给 Agent Brain。最终回答会进入 Evaluator 节点做质量检查，不通过则回到 Orchestrator 重新规划。
 
 为了控制长会话上下文，系统已实现：
-- `memory_utils.py` 的 `trim_messages()` 会自动压缩早期对话并保留最近窗口。
+- `app/memory/store.py` 的 `trim_messages()` 会自动压缩早期对话并保留最近窗口。
 - 根目录 `CLAUDE.md` 支持静态规则注入，每次对话开启都会被加载为系统提示。
 - 自动记忆笔记会把工具失败或大输出的教训写入本地 `agent_memory.json`，并在后续对话中作为参考加载。
+- Web 会话数据按 `session_id` 隔离到 `.data/sessions/{session_id}/`，包括 `conversation_archive.json`、`tool_results.json` 和 `events.jsonl`。
 
 ## 2. 运行链路
 
 ```mermaid
 flowchart TD
-    U[用户输入] --> M[main.py 维护 memory_messages]
+    U[用户输入] --> M[app/cli.py 维护 memory_messages]
     M --> O[Orchestrator: 判断复杂度并更新 todo]
     O --> A[Agent Brain: agent_reasoning_node]
     A -->|有 tool_calls| T[Tools: tools_execution_node]
@@ -40,7 +42,7 @@ flowchart TD
 
 关键设计点：
 
-- `main.py` 中的 `build_agent_graph()` 是图编排入口。
+- `app/cli.py` 中的 `build_agent_graph()` 是图编排入口。
 - `START -> orchestrator` 表示每轮用户输入都先进入编排节点。
 - Orchestrator 判断 `simple` / `complex`，复杂任务生成分级 todo list。
 - `should_continue()` 根据最后一条 LLM 消息是否包含 `tool_calls` 决定下一步。
@@ -52,13 +54,14 @@ flowchart TD
 
 ## 3. 状态模型
 
-状态结构定义在 `config.py`：
+状态结构定义在 `app/config.py`：
 
 ```python
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     revision_count: int
     eval_status: str
+    session_id: NotRequired[str]
     task_complexity: NotRequired[str]
     todo_list: NotRequired[list[dict[str, Any]]]
     orchestrator_next: NotRequired[str]
@@ -71,17 +74,18 @@ class AgentState(TypedDict):
 | `messages` | LangGraph 对话消息列表，使用 `add_messages` 自动累积新消息 |
 | `revision_count` | Evaluator 打回重做的次数 |
 | `eval_status` | 当前质检状态，主要取值为 `PASS` 或 `REJECT` |
+| `session_id` | 会话标识，用于隔离对话归档、工具输出和 Web 事件日志 |
 | `task_complexity` | Orchestrator 判断出的任务复杂度，通常是 `simple` 或 `complex` |
 | `todo_list` | 复杂任务的分级 todo list，每项包含 `id`、`title`、`status`、`note`、`children` |
 | `orchestrator_next` | Orchestrator 决定的下一节点，取值为 `agent` 或 `evaluate` |
 
-`main.py` 额外维护了一个 `memory_messages` 列表，作为命令行会话层面的短期记忆。用户输入会追加为 `HumanMessage`，最终回答会追加回该列表，下一轮继续带入上下文。
+`app/cli.py` 额外维护了一个 `memory_messages` 列表，作为命令行会话层面的短期记忆。用户输入会追加为 `HumanMessage`，最终回答会追加回该列表，下一轮继续带入上下文。
 
 `/clear` 命令会清空 `memory_messages`，并生成新的 `thread_id`。`thread_id` 传给 LangGraph 的 `MemorySaver`，用于区分不同会话线程。
 
 ## 4. 模块职责
 
-### 4.1 `main.py`
+### 4.1 `app/cli.py`
 
 主要职责：
 
@@ -99,7 +103,7 @@ class AgentState(TypedDict):
   - `/quit`、`/exit`、`/q`：退出。
   - `/clear`：清空会话记忆并更换线程 ID。
 
-### 4.2 `nodes.py`
+### 4.2 `app/nodes/`
 
 主要包含四个节点：
 
@@ -110,9 +114,9 @@ class AgentState(TypedDict):
 | Tools | `tools_execution_node = ToolNode(AGENT_TOOLS)` | 自动解析并执行模型请求的工具 |
 | Evaluator | `evaluate_response_node()` | 对最终回答做宏观 QA 检查，不合格时打回重做 |
 
-`get_system_prompt()` 会把 `prompts.yaml` 中的 `global_context` 和具体节点提示词合并，并注入当前时间。Agent Brain 的系统提示词会额外拼接 Orchestrator 当前维护的 todo 快照。
+`get_system_prompt()` 会把 `config/prompts.yaml` 中的 `global_context` 和具体节点提示词合并，并注入当前时间。Agent Brain 的系统提示词会额外拼接 Orchestrator 当前维护的 todo 快照。
 
-### 4.3 `tools.py`
+### 4.3 `app/tools/`
 
 当前工具集为：
 
@@ -122,9 +126,9 @@ class AgentState(TypedDict):
 | `run_python(code)` | 在当前 Python 进程中执行代码，用于计算和数据处理 |
 | `run_command(command)` | 调用系统 shell 执行命令，返回 stdout / stderr |
 
-工具描述来自 `prompts.yaml` 的 `tools` 配置。因为描述会直接影响模型何时调用工具，所以新增工具时要同时维护代码和提示词。
+工具描述来自 `config/prompts.yaml` 的 `tools` 配置。因为描述会直接影响模型何时调用工具，所以新增工具时要同时维护代码和提示词。
 
-### 4.4 `web_app.py` 和 `static/`
+### 4.4 `app/web.py` 和 `app/web_static/`
 
 Web UI 是一个轻量 FastAPI 应用，复用同一个 LangGraph agent：
 
@@ -141,12 +145,12 @@ Web UI 是一个轻量 FastAPI 应用，复用同一个 LangGraph agent：
 - 中间：模型流式输出、节点事件时间线。
 - 右侧：分级 todo 状态、当前节点、复杂度、tool 调用状态和结果。
 
-### 4.5 `config.py`
+### 4.5 `app/config.py`
 
 主要职责：
 
 - 读取 `.env`。
-- 读取 `prompts.yaml`。
+- 读取 `config/prompts.yaml`。
 - 定义 `AgentState`。
 - 定义 `StreamingConsoleCallback`，用于流式展示模型输出。
 - 根据 `LLM_PROVIDER` 初始化 OpenAI 兼容接口的 `ChatOpenAI`。
@@ -162,7 +166,7 @@ Web UI 是一个轻量 FastAPI 应用，复用同一个 LangGraph agent：
 | `llamacpp` | 默认 base url 为 `http://localhost:8080/v1` |
 | 其他值 | 使用 `LLM_API_KEY` 和可选 `LLM_BASE_URL` 作为 OpenAI 兼容服务 |
 
-### 4.6 `prompts.yaml`
+### 4.6 `config/prompts.yaml`
 
 提示词分为三类：
 
@@ -187,31 +191,85 @@ Web UI 是一个轻量 FastAPI 应用，复用同一个 LangGraph agent：
 
 不要把真实 `.env` 提交到公开仓库。当前仓库中 `.gitignore` 已忽略 `.env` 和 `.venv`。
 
-## 6. 启动方式
+## 6. 运行期目录结构
+
+源码和运行期数据分离：
+
+```text
+.
+├── run_cli.sh
+├── run_web.sh
+├── app/
+│   ├── cli.py
+│   ├── web.py
+│   ├── nodes/
+│   │   ├── orchestrator.py
+│   │   ├── agent.py
+│   │   ├── evaluator.py
+│   │   ├── tools_node.py
+│   │   └── common.py
+│   ├── config.py
+│   ├── logging_config.py
+│   ├── runtime_paths.py
+│   ├── memory/
+│   │   └── store.py
+│   ├── tools/
+│   │   ├── registry.py
+│   │   ├── search.py
+│   │   ├── python_runner.py
+│   │   ├── command_runner.py
+│   │   ├── context.py
+│   │   └── storage.py
+│   └── web_static/
+│       ├── index.html
+│       ├── app.js
+│       └── styles.css
+├── config/
+│   ├── prompts.yaml
+│   └── logging.yaml
+└── .data/
+    ├── global/
+    │   └── agent_memory.json
+    └── sessions/
+        └── {session_id}/
+            ├── conversation_archive.json
+            ├── tool_results.json
+            └── events.jsonl
+```
+
+约定：
+
+- `.data/global/` 保存跨会话共享的 Agent 记忆。
+- `.data/sessions/{session_id}/conversation_archive.json` 保存该会话被裁剪归档的早期消息。
+- `.data/sessions/{session_id}/tool_results.json` 保存该会话的工具输出。短输出仍会返回给模型，但也会记录到这里；长输出返回引用和摘要。
+- `.data/sessions/{session_id}/events.jsonl` 保存 Web 控制台事件日志。
+- 根目录不再生成 `conversation_archive.json`、`tool_results.json`、`uvicorn.log`。
+
+## 7. 启动方式
 
 命令行模式：
 
 ```bash
 source .venv/bin/activate
-python main.py
+./run_cli.sh
 ```
 
 Web UI 模式：
 
 ```bash
 source .venv/bin/activate
-uvicorn web_app:app --host 127.0.0.1 --port 8000
+./run_web.sh
 ```
 
 然后在浏览器打开 `http://127.0.0.1:8000`。
 
-## 7. 如何扩展一个新工具
+## 8. 如何扩展一个新工具
 
 新增工具通常需要三步：
 
-1. 在 `tools.py` 中新增 `@tool` 函数。
-2. 在 `prompts.yaml` 的 `tools` 下新增同名描述。
-3. 把工具加入 `AGENT_TOOLS` 列表。
+1. 在 `app/tools/` 中新增 `@tool` 函数。
+2. 在 `config/prompts.yaml` 的 `tools` 下新增同名描述。
+3. 在 `app/tools/registry.py` 把工具加入 `AGENT_TOOLS` 列表。
 
 示例结构：
 

@@ -9,10 +9,11 @@ from tavily import TavilyClient
 from langchain_openai import ChatOpenAI
 from langchain_core.callbacks import AsyncCallbackHandler
 from langgraph.graph.message import add_messages
+from app.runtime_paths import CONFIG_DIR
 
 # 加载外挂配置
 load_dotenv()
-with open("prompts.yaml", "r", encoding="utf-8") as f:
+with open(CONFIG_DIR / "prompts.yaml", "r", encoding="utf-8") as f:
     PROMPTS = yaml.safe_load(f)
 
 # 定义 ReAct 状态流

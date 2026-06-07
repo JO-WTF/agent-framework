@@ -2,9 +2,9 @@
 
 ```mermaid
 flowchart LR
-    User["用户"] --> CLI["main.py<br/>命令行交互层"]
-    User --> Browser["浏览器<br/>static Web UI"]
-    Browser --> WebApp["web_app.py<br/>FastAPI / WebSocket"]
+    User["用户"] --> CLI["app/cli.py<br/>命令行交互层"]
+    User --> Browser["浏览器<br/>app/web_static Web UI"]
+    Browser --> WebApp["app/web.py<br/>FastAPI / WebSocket"]
 
     CLI --> Memory["memory_messages<br/>短期会话记忆"]
     CLI --> Graph["LangGraph StateGraph<br/>AgentState"]
@@ -17,6 +17,7 @@ flowchart LR
         Messages["messages<br/>Human / AI / Tool messages"]
         Revision["revision_count<br/>质检重试次数"]
         EvalStatus["eval_status<br/>PASS / REJECT"]
+        Session["session_id<br/>会话隔离标识"]
         Complexity["task_complexity<br/>simple / complex / unknown"]
         Todo["todo_list<br/>分级任务清单"]
         Next["orchestrator_next<br/>agent / evaluate"]
@@ -50,13 +51,13 @@ flowchart LR
 
     subgraph Config["配置与提示词"]
         Env[".env<br/>LLM_PROVIDER / MODEL / API_KEY / TAVILY_API_KEY"]
-        Prompts["prompts.yaml<br/>global_context / orchestrator / agent_brain / evaluator / tools"]
-        Logging["logging.yaml<br/>日志等级与格式"]
+        Prompts["config/prompts.yaml<br/>global_context / orchestrator / agent_brain / evaluator / tools"]
+        Logging["config/logging.yaml<br/>日志等级与格式"]
     end
 
-    Env --> ConfigPy["config.py<br/>初始化 LLM / Tavily / State / Callback"]
+    Env --> ConfigPy["app/config.py<br/>初始化 LLM / Tavily / State / Callback"]
     Prompts --> ConfigPy
-    Logging --> Logger["logger.py<br/>统一日志"]
+    Logging --> Logger["app/logging_config.py<br/>统一日志"]
     ConfigPy --> Orchestrator
     ConfigPy --> Agent
     ConfigPy --> Evaluator
@@ -65,7 +66,7 @@ flowchart LR
     Logger --> ToolNode
     Logger --> Evaluator
 
-    subgraph Tools["tools.py 工具层"]
+    subgraph Tools["app/tools/registry.py 工具层"]
         Search["search_web<br/>联网检索"]
         Python["run_python<br/>Python 计算与数据处理"]
         Command["run_command<br/>系统命令执行"]
@@ -93,14 +94,14 @@ flowchart LR
 
 这是一个基于 LangGraph 与工具调用的循环执行框架，整体架构分为“命令行/浏览器入口、状态图、运行时节点、工具层、配置层、外部依赖”六部分。
 
-- `main.py` 是命令行入口，负责接收用户输入，维护 `memory_messages`，构建 LangGraph 图，并驱动执行。
-- `build_agent_graph()` 在 `main.py` 中创建 `StateGraph(AgentState)`，注册 `orchestrator`、`agent`、`tools`、`evaluate` 四个节点。
+- `app/cli.py` 是命令行入口，负责接收用户输入，维护 `memory_messages`，构建 LangGraph 图，并驱动执行。
+- `build_agent_graph()` 在 `app/cli.py` 中创建 `StateGraph(AgentState)`，注册 `orchestrator`、`agent`、`tools`、`evaluate` 四个节点。
 - `orchestrator_node` 负责判断任务复杂度、生成和更新分级 `todo_list`，并决定下一步进入 `agent` 或 `evaluate`。
 - `agent_reasoning_node` 是核心大脑节点，注入当前 `todo_list` 和 `agent_brain` 提示词，通过绑定了工具的模型执行推理。
-- `tools_execution_node` 使用 LangGraph 的 `ToolNode`，自动解析模型输出中的 `tool_calls` 并执行 `tools.py` 中定义的工具函数。
+- `tools_execution_node` 使用 LangGraph 的 `ToolNode`，自动解析模型输出中的 `tool_calls` 并执行 `app/tools/` 中定义的工具函数。
 - `evaluate_response_node` 负责最终质量检查，`PASS` 则结束，`REJECT` 则将状态回退给 `orchestrator` 重试。
-- `config.py` 读取 `.env` 与 `prompts.yaml`，初始化 LLM 客户端、Tavily 搜索客户端、状态类型和回调。
-- `web_app.py` 提供 Web UI，复用同一个图引擎，并通过 WebSocket 实时推送模型输出、工具运行、节点事件和 todo 变化。
+- `app/config.py` 读取 `.env` 与 `config/prompts.yaml`，初始化 LLM 客户端、Tavily 搜索客户端、状态类型和回调。
+- `app/web.py` 提供 Web UI，复用同一个图引擎，并通过 WebSocket 实时推送模型输出、工具运行、节点事件和 todo 变化。
 
 ## 运行链路
 
@@ -122,7 +123,7 @@ flowchart LR
 
 ## 状态模型
 
-在 `config.py` 中定义：
+在 `app/config.py` 中定义：
 
 ```python
 class AgentState(TypedDict):
@@ -145,16 +146,16 @@ class AgentState(TypedDict):
 
 ## 模块职责
 
-### main.py
+### app/cli.py
 
 - 构造 `StateGraph` 并注入 `MemorySaver()` checkpointer。
 - 提供命令行交互：`/clear` 清空记忆并重置线程 ID，`/quit` 退出。
 - 将用户输入封装为 `HumanMessage`，追加到 `memory_messages`。
 - 发送最终 AI 响应回记忆列表。
 
-### config.py
+### app/config.py
 
-- 读取 `prompts.yaml` 和环境变量。
+- 读取 `config/prompts.yaml` 和环境变量。
 - 根据 `LLM_PROVIDER` 初始化 `ChatOpenAI`：
   - `openai`
   - `deepseek`
@@ -164,7 +165,7 @@ class AgentState(TypedDict):
 - 初始化 `TavilyClient` 和 `llm_client`。
 - 提供 `StreamingConsoleCallback`，支持命令行流式输出。
 
-### nodes.py
+### app/nodes/
 
 - `orchestrator_node`：
   - 基于 `orchestrator` 提示词分析 `todo_list`、任务复杂度与路由。
@@ -177,7 +178,7 @@ class AgentState(TypedDict):
   - 对最终回答与当前 `todo_list` 进行质量检查。
   - 当 `revision_count >= 3` 时触发熔断，避免无限重试。
 
-### tools.py
+### app/tools/
 
 当前工具集：
 
@@ -185,7 +186,7 @@ class AgentState(TypedDict):
 - `run_python(code)`：执行 Python 代码并返回 stdout。
 - `run_command(command)`：执行 shell 命令并返回 stdout/stderr。
 
-### web_app.py
+### app/web.py
 
 - `ConsoleSession` 管理 `thread_id`、`memory_messages`、`running_task` 和 `state` 快照。
 - `WebConsoleCallback` 实时推送：模型输出、工具调用、节点更新。
@@ -198,7 +199,7 @@ class AgentState(TypedDict):
 
 ## 提示词与策略
 
-`prompts.yaml` 定义：
+`config/prompts.yaml` 定义：
 
 - `global_context`：全局上下文信息，如当前时间。
 - `orchestrator`：任务拆解、todo 生成与路由逻辑。
@@ -220,10 +221,10 @@ class AgentState(TypedDict):
 - 终端模式：
   ```bash
   source .venv/bin/activate
-  python main.py
+  ./run_cli.sh
   ```
 - Web UI 模式：
   ```bash
   source .venv/bin/activate
-  uvicorn web_app:app --host 127.0.0.1 --port 8000
+  ./run_web.sh
   ```

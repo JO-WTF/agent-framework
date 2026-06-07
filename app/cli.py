@@ -1,14 +1,14 @@
 import sys
 import uuid
 import asyncio
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from config import AgentState, StreamingConsoleCallback
-from memory_utils import trim_messages
-from nodes import orchestrator_node, agent_reasoning_node, tools_execution_node, evaluate_response_node
-from logger import logger
+from app.config import AgentState, StreamingConsoleCallback
+from app.memory.store import trim_messages
+from app.nodes import orchestrator_node, agent_reasoning_node, tools_execution_node, evaluate_response_node
+from app.logging_config import logger
 
 # ----------------- 路由裁判逻辑 -----------------
 def should_continue(state: AgentState) -> str:
@@ -26,7 +26,11 @@ def route_after_evaluation(state: AgentState) -> str:
 
 def route_after_orchestration(state: AgentState) -> str:
     """编排节点判断下一步：继续行动还是进入质检"""
-    return state.get("orchestrator_next", "agent")
+    last_message = state["messages"][-1]
+    has_final_reply = isinstance(last_message, AIMessage) and not getattr(last_message, "tool_calls", None)
+    if state.get("orchestrator_next") == "evaluate" and has_final_reply:
+        return "evaluate"
+    return "agent"
 
 # ----------------- 图的组装 -----------------
 def build_agent_graph():

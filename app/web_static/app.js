@@ -11,7 +11,7 @@ const els = {
   modelOutput: document.getElementById("modelOutput"),
   eventList: document.getElementById("eventList"),
   todoList: document.getElementById("todoList"),
-  toolList: document.getElementById("toolList"),
+  routeList: document.getElementById("routeList"),
   complexityValue: document.getElementById("complexityValue"),
   currentNodeValue: document.getElementById("currentNodeValue"),
 };
@@ -32,6 +32,13 @@ function getSessionId() {
 const sessionId = getSessionId();
 
 const expandedEvents = new Set();
+const ROUTE_GROUPS = [
+  ["START", "orchestrator", "agent", "orchestrator", "evaluate", "END"],
+  ["agent", "tools", "orchestrator"],
+  ["evaluate", "orchestrator"],
+];
+let mermaidModulePromise;
+let routeRenderVersion = 0;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -286,32 +293,220 @@ function renderTodos(items) {
     .join("");
 }
 
-function renderTools(tools) {
-  if (!tools.length) {
-    els.toolList.className = "tool-list empty";
-    els.toolList.textContent = "暂无 tool 调用";
-    return;
+function routeLabel(route) {
+  const labels = {
+    START: "START",
+    orchestrator: "Orchestrator",
+    agent: "Agent",
+    tools: "Tools",
+    evaluate: "Evaluator",
+    END: "END",
+  };
+  return labels[route] || route;
+}
+
+function collectVisitedRoutes(state) {
+  const visited = new Set();
+  for (const event of state.events || []) {
+    if (event.type === "run_start") {
+      visited.add("START");
+      visited.add("orchestrator");
+    }
+    if (event.type === "node_update") {
+      const node = event.node || event.details?.node;
+      if (node) visited.add(node);
+    }
+    if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_error" || event.type === "tool_message") {
+      visited.add("tools");
+    }
+    if (event.type === "run_complete") {
+      visited.add("END");
+    }
+  }
+  if (state.current_node) visited.add(state.current_node);
+  return visited;
+}
+
+function collectRouteSequence(state) {
+  const sequence = [];
+  const events = state.events || [];
+  const lastRunStartIndex = events.map((event) => event.type).lastIndexOf("run_start");
+  const routeEvents = lastRunStartIndex >= 0 ? events.slice(lastRunStartIndex) : events;
+  for (const event of routeEvents) {
+    if (event.type === "run_start") {
+      sequence.push("START", "orchestrator");
+    }
+    if (event.type === "node_update") {
+      const node = event.node || event.details?.node;
+      if (node) sequence.push(node);
+    }
+    if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_error" || event.type === "tool_message") {
+      sequence.push("tools");
+    }
+    if (event.type === "run_complete") {
+      sequence.push("END");
+    }
   }
 
-  els.toolList.className = "tool-list";
-  els.toolList.innerHTML = tools
-    .slice()
-    .reverse()
-    .map((tool) => {
-      const status = escapeHtml(tool.status || "running");
-      return `
-        <div class="tool-row">
-          <div class="tool-meta">
-            <span class="tool-title">${escapeHtml(tool.name || "tool")}</span>
-            <span class="badge ${status}">${statusLabel(status)}</span>
-          </div>
-          <div class="tool-time">${escapeHtml(tool.started_at || "")}${tool.ended_at ? ` - ${escapeHtml(tool.ended_at)}` : ""}</div>
-          ${tool.input ? `<div class="tool-output">${escapeHtml(tool.input)}</div>` : ""}
-          ${tool.output ? `<div class="tool-output">${escapeHtml(tool.output)}</div>` : ""}
-        </div>
-      `;
-    })
-    .join("");
+  const deduped = [];
+  for (const route of sequence) {
+    if (deduped[deduped.length - 1] !== route) {
+      deduped.push(route);
+    }
+  }
+  return deduped;
+}
+
+function collectRouteEdgeLabels(state) {
+  const sequence = collectRouteSequence(state);
+  const labels = new Map();
+  let step = 1;
+
+  for (let index = 1; index < sequence.length; index += 1) {
+    const from = sequence[index - 1];
+    const to = sequence[index];
+    if (from === to) continue;
+    const key = `${from}->${to}`;
+    if (!labels.has(key)) {
+      labels.set(key, []);
+    }
+    labels.get(key).push(step);
+    step += 1;
+  }
+
+  return labels;
+}
+
+function routeClass(route, active, visited) {
+  if (active === route) return "active";
+  if (visited.has(route)) return "visited";
+  return "idle";
+}
+
+function mermaidNodeClass(route, active, visited) {
+  return routeClass(route, active, visited);
+}
+
+function buildRouteMermaidDefinition(active, visited, edgeLabels) {
+  const nodeClasses = {
+    S: mermaidNodeClass("START", active, visited),
+    O: mermaidNodeClass("orchestrator", active, visited),
+    A: mermaidNodeClass("agent", active, visited),
+    E: mermaidNodeClass("evaluate", active, visited),
+    X: mermaidNodeClass("END", active, visited),
+    T: mermaidNodeClass("tools", active, visited),
+  };
+
+  const classLines = Object.entries(nodeClasses)
+    .map(([node, className]) => `class ${node} ${className};`)
+    .join("\n");
+  const edges = [
+    ["START->orchestrator", "S", "O", "solid"],
+    ["orchestrator->agent", "O", "A", "solid"],
+    ["agent->orchestrator", "A", "O", "solid"],
+    ["orchestrator->evaluate", "O", "E", "solid"],
+    ["evaluate->END", "E", "X", "solid"],
+    ["agent->tools", "A", "T", "dotted"],
+    ["tools->orchestrator", "T", "O", "dotted"],
+    ["evaluate->orchestrator", "E", "O", "dotted"],
+  ];
+  const nodeSyntax = {
+    S: 'S(["START"])',
+    O: 'O["Orchestrator"]',
+    A: 'A["Agent"]',
+    E: 'E["Evaluator"]',
+    X: 'X(["END"])',
+    T: 'T["Tools"]',
+  };
+  const edgeLines = edges.map(([key, from, to, style]) => {
+    const label = edgeLabels.get(key)?.join(", ");
+    const fromNode = nodeSyntax[from];
+    const toNode = nodeSyntax[to];
+    if (!label) {
+      return `  ${fromNode} ${style === "dotted" ? "-.->" : "-->"} ${toNode}`;
+    }
+    if (style === "dotted") {
+      return `  ${fromNode} -. ${label} .-> ${toNode}`;
+    }
+    return `  ${fromNode} -->|${label}| ${toNode}`;
+  }).join("\n");
+  const linkStyles = edges
+    .map(([key], index) => edgeLabels.has(key) ? `  linkStyle ${index} stroke:#2563eb,stroke-width:3px;` : "")
+    .filter(Boolean)
+    .join("\n");
+
+  return `
+flowchart TD
+${edgeLines}
+
+  classDef idle fill:#f3f6fa,stroke:#d9e1ec,color:#667085,stroke-width:1px;
+  classDef visited fill:#eaf1ff,stroke:#bdd2fb,color:#2563eb,stroke-width:1.5px;
+  classDef active fill:#e8f7ee,stroke:#15803d,color:#15803d,stroke-width:3px;
+  ${classLines}
+${linkStyles}
+`;
+}
+
+function loadMermaid() {
+  if (!mermaidModulePromise) {
+    mermaidModulePromise = import("https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs")
+      .then((module) => {
+        module.default.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme: "base",
+          flowchart: {
+            curve: "basis",
+            htmlLabels: false,
+            nodeSpacing: 34,
+            rankSpacing: 34,
+          },
+          themeVariables: {
+            fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+            primaryColor: "#f3f6fa",
+            primaryBorderColor: "#d9e1ec",
+            primaryTextColor: "#162033",
+            lineColor: "#98a2b3",
+          },
+        });
+        return module.default;
+      });
+  }
+  return mermaidModulePromise;
+}
+
+async function renderMermaidRouteDiagram(definition, version) {
+  try {
+    const mermaid = await loadMermaid();
+    if (version !== routeRenderVersion) return;
+    const { svg } = await mermaid.render("routeGraph", definition);
+    if (version !== routeRenderVersion) return;
+    const diagram = els.routeList.querySelector(".route-diagram");
+    if (diagram) {
+      diagram.innerHTML = svg;
+      diagram.classList.remove("loading");
+    }
+  } catch (error) {
+    const notice = els.routeList.querySelector(".route-library-error");
+    if (notice) {
+      notice.textContent = `Mermaid 加载失败：${error.message}`;
+      notice.classList.remove("hidden");
+    }
+  }
+}
+
+function renderRoutes(state) {
+  const active = state.current_node || "";
+  const visited = collectVisitedRoutes(state);
+  const edgeLabels = collectRouteEdgeLabels(state);
+  const mermaidDefinition = buildRouteMermaidDefinition(active, visited, edgeLabels);
+  const renderVersion = ++routeRenderVersion;
+
+  els.routeList.innerHTML = `
+    <div class="route-diagram loading">正在加载 Mermaid 流程图...</div>
+    <div class="route-library-error hidden"></div>
+  `;
+  renderMermaidRouteDiagram(mermaidDefinition, renderVersion);
 }
 
 function renderState(state) {
@@ -329,7 +524,7 @@ function renderState(state) {
   renderMessages(state.messages || []);
   renderEvents(state.events || []);
   renderTodos(state.todo_list || []);
-  renderTools(state.tool_runs || []);
+  renderRoutes(state);
 }
 
 function sessionHeaders() {
@@ -387,7 +582,7 @@ els.chatForm.addEventListener("submit", async (event) => {
   }
 
   els.messageInput.value = "";
-  await loadState();
+  renderRoutes({ current_node: "", events: [] });
 });
 
 els.messageInput.addEventListener("keydown", (event) => {

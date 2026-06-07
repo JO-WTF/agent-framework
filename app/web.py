@@ -2,7 +2,6 @@ import asyncio
 import json
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -12,12 +11,9 @@ from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel
 
-from main import build_agent_graph
-from memory_utils import trim_messages
-
-
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
+from app.cli import build_agent_graph
+from app.memory.store import append_session_event, trim_messages
+from app.runtime_paths import STATIC_DIR
 
 
 class ChatRequest(BaseModel):
@@ -25,45 +21,8 @@ class ChatRequest(BaseModel):
 
 
 class ConsoleSession:
-    def __init__(self) -> None:
-        self.agent_app = build_agent_graph()
-        self.thread_id = str(uuid.uuid4())
-        self.memory_messages = []
-        self.running_task: asyncio.Task | None = None
-        self.subscribers: set[asyncio.Queue] = set()
-        self.state: dict[str, Any] = {
-            "status": "idle",
-            "current_node": "",
-            "task_complexity": "unknown",
-            "todo_list": [],
-            "model_output": "",
-            "tool_runs": [],
-            "events": [],
-            "messages": [],
-        }
-
-
-class SessionManager:
-    def __init__(self) -> None:
-        self.sessions: dict[str, ConsoleSession] = {}
-
-    def create_session(self) -> tuple[str, ConsoleSession]:
-        session_id = str(uuid.uuid4())
-        session = ConsoleSession()
-        self.sessions[session_id] = session
-        return session_id, session
-
-    def get_session(self, session_id: str | None) -> tuple[str, ConsoleSession]:
-        if session_id and session_id in self.sessions:
-            return session_id, self.sessions[session_id]
-        return self.create_session()
-
-    def remove_session(self, session_id: str) -> None:
-        self.sessions.pop(session_id, None)
-
-
-class ConsoleSession:
-    def __init__(self) -> None:
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
         self.agent_app = build_agent_graph()
         self.thread_id = str(uuid.uuid4())
         self.memory_messages = []
@@ -93,6 +52,7 @@ class ConsoleSession:
         }
         self.state["events"].append(event)
         self.state["events"] = self.state["events"][-200:]
+        append_session_event(self.session_id, event)
         await self.broadcast(event)
 
     async def publish_llm_token(self, token: str) -> None:
@@ -119,6 +79,7 @@ class ConsoleSession:
         }
         events.append(event)
         self.state["events"] = events[-200:]
+        append_session_event(self.session_id, event)
         await self.broadcast(event)
 
     async def broadcast(self, event: dict[str, Any]) -> None:
@@ -147,6 +108,25 @@ class ConsoleSession:
             "events": [],
             "messages": [],
         })
+
+
+class SessionManager:
+    def __init__(self) -> None:
+        self.sessions: dict[str, ConsoleSession] = {}
+
+    def create_session(self) -> tuple[str, ConsoleSession]:
+        session_id = str(uuid.uuid4())
+        session = ConsoleSession(session_id)
+        self.sessions[session_id] = session
+        return session_id, session
+
+    def get_session(self, session_id: str | None) -> tuple[str, ConsoleSession]:
+        if session_id and session_id in self.sessions:
+            return session_id, self.sessions[session_id]
+        return self.create_session()
+
+    def remove_session(self, session_id: str) -> None:
+        self.sessions.pop(session_id, None)
 
 
 manager = SessionManager()
@@ -267,11 +247,12 @@ async def run_agent(user_text: str, session: ConsoleSession, session_id: str | N
     session.memory_messages.append(user_message)
     session.state.update({
         "status": "running",
-        "current_node": "orchestrator",
+        "current_node": "",
         "task_complexity": "unknown",
         "todo_list": [],
         "model_output": "",
         "tool_runs": [],
+        "events": [],
     })
     session.state["messages"].append({"role": "user", "content": user_text, "tool_calls": []})
     await session.publish({
@@ -398,6 +379,15 @@ async def chat(request: Request, payload: ChatRequest):
     if session.running_task and not session.running_task.done():
         raise HTTPException(status_code=409, detail="agent is already running")
 
+    session.state.update({
+        "status": "running",
+        "current_node": "orchestrator",
+        "task_complexity": "unknown",
+        "todo_list": [],
+        "model_output": "",
+        "tool_runs": [],
+        "events": [],
+    })
     session.running_task = asyncio.create_task(run_agent(message, session, session_id))
     return {"status": "started", "session_id": session_id}
 
@@ -431,5 +421,8 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             payload = await queue.get()
             await websocket.send_json(payload)
+    except asyncio.CancelledError:
+        session.subscribers.discard(queue)
+        return
     except WebSocketDisconnect:
         session.subscribers.discard(queue)

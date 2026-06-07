@@ -15,7 +15,7 @@
 - 禁止模型直接通过 shell 执行任意命令，避免恶意命令破坏主机系统。
 
 执行步骤
-1. 在 `tools.py` 中替换 `subprocess.run(command, shell=True, ...)` 为 `subprocess.run(args_list, shell=False, ...)`。
+1. 在 `app/tools/registry.py` 中替换 `subprocess.run(command, shell=True, ...)` 为 `subprocess.run(args_list, shell=False, ...)`。
 2. 设计并实现命令白名单，例如只允许 `ls`, `cat`, `echo`, `python` 等安全命令。
 3. 为 `run_command` 添加输入检查，拒绝包含 `|`, `&&`, `;`, `>`、重定向、管道、子 shell 等危险符号。
 4. 添加默认超时和输出限制：
@@ -62,7 +62,7 @@
 - 规范工具输入参数，防止 Prompt Injection 引入恶意命令。
 
 执行步骤
-1. 在 `tools.py` 或 `nodes.py` 工具调用入口加入参数检测。
+1. 在 `app/tools/` 或 `app/nodes/` 工具调用入口加入参数检测。
 2. 定义危险模式黑名单，例如 `rm -rf`, `ssh`, `curl | sh`, `base64 -d`, `eval`, `exec`。
 3. 对 `run_python` 和 `run_command` 返回结果进行清洗：
    - 剪裁过长文本
@@ -84,8 +84,8 @@
 - 防止 `messages` 随会话无限增长，控制 LLM 上下文大小。
 
 实现细节 ✅
-- `memory_utils.py` 中 `trim_messages()` 默认保留最近 8 条消息
-- `nodes.py` 所有主节点改用裁剪后的上下文
+- `app/memory/store.py` 中 `trim_messages()` 默认保留最近 8 条消息
+- `app/nodes/` 所有主节点改用裁剪后的上下文
 - 工具结果超过 1 KB 时生成摘要 + 引用 ID
 - 工具输出存储到 `tool_results.json`，模型仅收到引用
 
@@ -103,7 +103,7 @@
 
 实现细节 ✅
 - 创建 `CLAUDE.md` 作为静态全局提示
-- `memory_utils.py` 中 `load_static_guidelines()` 加载 CLAUDE.md
+- `app/memory/store.py` 中 `load_static_guidelines()` 加载 CLAUDE.md
 - 所有节点调用 `get_system_prompt()` 获取完整系统提示（静态指导 + 节点特定提示）
 
 验收标准 ✅
@@ -173,7 +173,7 @@
    - `summary`
    - `reference_id`
    - `metadata`
-3. 在 `prompts.yaml` 中增加说明，指导模型使用 `reference_id` 查询数据，而不是直接要求完整结果。
+3. 在 `config/prompts.yaml` 中增加说明，指导模型使用 `reference_id` 查询数据，而不是直接要求完整结果。
 4. 为常见格式增加提取器：
    - CSV 提取列名、行数、摘要结果
    - JSON 提取键结构和字段说明
@@ -200,8 +200,8 @@
    - `reference_id`
    - `error_type`: `timeout` / `syntax_error` / `external_failure` / `security_rejected`
    - `details`（可选）
-2. 修改 `tools.py` 所有工具函数，返回该 schema。
-3. 在 `nodes.py` 中新增错误分类逻辑，将 `failure` 转换为：
+2. 修改 `app/tools/registry.py` 所有工具函数，返回该 schema。
+3. 在 `app/nodes/` 中新增错误分类逻辑，将 `failure` 转换为：
    - 具体问题描述
    - 推荐下一步动作
    - 是否需要用户确认
@@ -228,7 +228,7 @@
 - 支持多用户并发访问，避免单例 `ConsoleSession` 导致状态冲突。
 
 实现细节 ✅
-- `web_app.py` 新增 `SessionManager` 管理多个 `ConsoleSession` 实例
+- `app/web.py` 新增 `SessionManager` 管理多个 `ConsoleSession` 实例
 - 通过 `session_id` 绑定 API 请求和 WebSocket 连接
 - 每个 `ConsoleSession` 保留独立的 `thread_id`、`memory_messages`、`state`、`running_task`
 - 前端通过 `localStorage` 维护 `session_id`，每次请求都发送给后端
@@ -289,7 +289,7 @@
 
 ## 最近修复
 
-- **2026-06-07**: 修复 `web_app.py` 中 `run_agent()` 的回调参数拼写错误 (`sessionsession` → `session`)
+- **2026-06-07**: 修复 `app/web.py` 中 `run_agent()` 的回调参数拼写错误 (`sessionsession` → `session`)
 - **2026-06-07**: 完成 WebSocket 会话隔离，每个浏览器用户获得独立的 `ConsoleSession` 和事件流
 - **2026-06-07**: 实现后端事件发布机制，所有模型和工具更新通过 WebSocket 实时流向前端
 
