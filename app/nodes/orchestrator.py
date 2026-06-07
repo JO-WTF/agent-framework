@@ -24,13 +24,15 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
     trimmed_messages = trim_messages(state["messages"], session_id=session_id)
     recent_messages = summarize_recent_messages({"messages": trimmed_messages})
 
+    user_prompt = (
+        f"当前任务复杂度: {state.get('task_complexity', 'unknown')}\n\n"
+        f"当前 todo_list JSON:\n{current_todo_json}\n\n"
+        f"最近消息:\n{recent_messages}"
+    )
+
     response = await llm_client.ainvoke([
         SystemMessage(content=system_prompt),
-        HumanMessage(content=(
-            f"当前任务复杂度: {state.get('task_complexity', 'unknown')}\n\n"
-            f"当前 todo_list JSON:\n{current_todo_json}\n\n"
-            f"最近消息:\n{recent_messages}"
-        ))
+        HumanMessage(content=user_prompt)
     ], silent_config(config))
 
     import re
@@ -45,6 +47,7 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
         if not think_content:
             think_content = match.group(1).strip()
         message_content = response.content.replace(match.group(0), "").strip()
+
 
     try:
         parsed = parse_json_object(message_content)
@@ -75,5 +78,10 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
         "orchestrator_next": next_node,
         "orchestrator_think": think_content,
         "orchestrator_message": message_content,
+        "orchestrator_prompt": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
     }
+
 

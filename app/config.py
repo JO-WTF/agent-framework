@@ -27,6 +27,8 @@ class AgentState(TypedDict):
     orchestrator_next: NotRequired[str]
     orchestrator_think: NotRequired[str]
     orchestrator_message: NotRequired[str]
+    orchestrator_prompt: NotRequired[list[dict[str, str]]]
+
 
 # 控制台绚丽日志回调
 class StreamingConsoleCallback(AsyncCallbackHandler):

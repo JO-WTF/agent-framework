@@ -816,3 +816,45 @@ textarea {
   max-height: 200px;
 }
 
+.orchestrator-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.orchestrator-prompt-details {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.orchestrator-prompt-details[open] {
+  border-color: #b9ccf5;
+}
+
+.orchestrator-prompt-summary {
+  padding: 6px 10px;
+  background: var(--surface-soft);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 650;
+  user-select: none;
+}
+
+.prompt-summary-text {
+  color: var(--text);
+}
+
+.prompt-content {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  max-height: 180px;
+  background: #fbfcfe;
+}
+
+

@@ -224,12 +224,29 @@ function renderEventDetail(event) {
     if (nodeName === "orchestrator") {
       const think = update.orchestrator_think || "";
       const msg = update.orchestrator_message || "";
-      const stateFields = Object.keys(update).filter((key) => key !== "messages" && key !== "orchestrator_think" && key !== "orchestrator_message");
+      const prompt = update.orchestrator_prompt || [];
+      const stateFields = Object.keys(update).filter((key) => key !== "messages" && key !== "orchestrator_think" && key !== "orchestrator_message" && key !== "orchestrator_prompt");
       return `
         <div class="detail-grid">
           <div><span class="detail-label">节点</span><strong>${escapeHtml(nodeName)}</strong></div>
           <div><span class="detail-label">更新字段</span><strong>${escapeHtml(Object.keys(update).filter(k => k !== "messages").join(", ") || "-")}</strong></div>
         </div>
+        ${prompt && prompt.length ? `
+          <div class="detail-block">
+            <div class="detail-label">📥 发送的 Message (Prompts)</div>
+            <div class="orchestrator-prompts">
+              ${prompt.map((p) => `
+                <details class="orchestrator-prompt-details" ${p.role === 'user' ? 'open' : ''}>
+                  <summary class="orchestrator-prompt-summary">
+                    <span class="badge neutral">${escapeHtml(p.role)}</span>
+                    <span class="prompt-summary-text">${escapeHtml(p.role === 'system' ? '系统提示词' : '运行状态与历史上下文')}</span>
+                  </summary>
+                  <pre class="detail-pre prompt-content">${escapeHtml(p.content)}</pre>
+                </details>
+              `).join("")}
+            </div>
+          </div>
+        ` : ""}
         ${think ? `
           <div class="detail-block orchestrator-think-block">
             <div class="detail-label">🧠 LLM 思考过程 (Think)</div>
