@@ -71,7 +71,7 @@ class ConsoleSession:
         append_session_event(self.session_id, event)
         await self.broadcast(event)
 
-    async def start_llm_run(self, prompts: list[str]) -> None:
+    async def start_node_llm_run(self, node_name: str, prompts: list[str]) -> None:
         now = datetime.now().strftime("%H:%M:%S")
         formatted_prompts = []
         for p in prompts:
@@ -84,15 +84,20 @@ class ConsoleSession:
             "id": str(uuid.uuid4()),
             "time": now,
             "updated_at": "",
-            "type": "llm_run",
-            "title": "模型调用 (开始)",
+            "type": "node_update",
+            "title": f"节点更新: {node_name} (模型调用中...)",
+            "node": node_name,
             "details": {
-                "prompts": formatted_prompts,
-                "content": "",
-                "think": "",
-                "message": "",
-                "token_count": 0,
-                "status": "running",
+                "node": node_name,
+                "update": {},
+                "llm_run": {
+                    "prompts": formatted_prompts,
+                    "content": "",
+                    "think": "",
+                    "message": "",
+                    "token_count": 0,
+                    "status": "running",
+                }
             },
         }
         self.state["events"].append(event)
@@ -100,38 +105,40 @@ class ConsoleSession:
         append_session_event(self.session_id, event)
         await self.broadcast(event)
 
-    async def update_llm_run_token(self, token: str) -> None:
+    async def update_node_llm_run(self, token: str) -> None:
         now = datetime.now().strftime("%H:%M:%S")
         events = self.state["events"]
         last_event = events[-1] if events else None
 
-        if last_event and last_event.get("type") == "llm_run":
+        if last_event and last_event.get("type") == "node_update" and last_event.get("node") == "agent":
             details = last_event.setdefault("details", {})
-            content = f"{details.get('content', '')}{token}"
-            details["content"] = content
-            details["token_count"] = details.get("token_count", 0) + 1
+            llm_run = details.setdefault("llm_run", {})
+            content = f"{llm_run.get('content', '')}{token}"
+            llm_run["content"] = content
+            llm_run["token_count"] = llm_run.get("token_count", 0) + 1
 
             # Parse think and message
             think, message = parse_thinking_content(content)
-            details["think"] = think
-            details["message"] = message
+            llm_run["think"] = think
+            llm_run["message"] = message
 
-            last_event["title"] = f"模型调用 (进行中, {details['token_count']} tokens)"
+            last_event["title"] = f"节点更新: agent (正在调用模型, {llm_run['token_count']} tokens)"
             last_event["updated_at"] = now
             await self.broadcast(last_event)
 
-    async def complete_llm_run(self) -> None:
+    async def complete_node_llm_run(self) -> None:
         now = datetime.now().strftime("%H:%M:%S")
         events = self.state["events"]
         last_event = events[-1] if events else None
 
-        if last_event and last_event.get("type") == "llm_run":
+        if last_event and last_event.get("type") == "node_update" and last_event.get("node") == "agent":
             details = last_event.setdefault("details", {})
-            details["status"] = "completed"
-            last_event["title"] = f"模型调用完成 ({details.get('token_count', 0)} tokens)"
+            llm_run = details.setdefault("llm_run", {})
+            llm_run["status"] = "completed"
+            last_event["title"] = f"节点更新: agent (模型调用完成, {llm_run.get('token_count', 0)} tokens)"
             last_event["updated_at"] = now
-            append_session_event(self.session_id, last_event)
             await self.broadcast(last_event)
+
 
 
     async def broadcast(self, event: dict[str, Any]) -> None:
@@ -192,16 +199,17 @@ class WebConsoleCallback(AsyncCallbackHandler):
 
     async def on_llm_start(self, serialized, prompts, **kwargs):
         self.session.state["current_node"] = "agent"
-        await self.session.start_llm_run(prompts)
+        await self.session.start_node_llm_run("agent", prompts)
 
     async def on_llm_new_token(self, token: str, **kwargs) -> None:
         if not token:
             return
         self.session.state["model_output"] += token
-        await self.session.update_llm_run_token(token)
+        await self.session.update_node_llm_run(token)
 
     async def on_llm_end(self, response, **kwargs):
-        await self.session.complete_llm_run()
+        await self.session.complete_node_llm_run()
+
 
 
     async def on_tool_start(self, serialized, input_str, **kwargs):
@@ -326,12 +334,25 @@ async def run_agent(user_text: str, session: ConsoleSession, session_id: str | N
         async for update in session.agent_app.astream(initial_input, config, stream_mode="updates"):
             for node_name, node_update in update.items():
                 session.state["current_node"] = node_name
-                await session.publish({
-                    "type": "node_update",
-                    "title": f"节点更新: {node_name}",
-                    "node": node_name,
-                    "details": {"node": node_name, "update": make_json_safe(node_update)},
-                })
+                events = session.state["events"]
+                last_event = events[-1] if events else None
+
+                if (last_event and last_event.get("type") == "node_update" 
+                        and last_event.get("node") == node_name):
+                    details = last_event.setdefault("details", {})
+                    details["update"] = make_json_safe(node_update)
+                    last_event["title"] = f"节点更新: {node_name}"
+                    last_event["updated_at"] = datetime.now().strftime("%H:%M:%S")
+                    append_session_event(session.session_id, last_event)
+                    await session.broadcast(last_event)
+                else:
+                    await session.publish({
+                        "type": "node_update",
+                        "title": f"节点更新: {node_name}",
+                        "node": node_name,
+                        "details": {"node": node_name, "update": make_json_safe(node_update)},
+                    })
+
 
                 if node_name == "orchestrator":
                     previous_todo = session.state.get("todo_list", [])

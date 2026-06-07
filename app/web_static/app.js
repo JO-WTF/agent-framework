@@ -376,6 +376,83 @@ function renderEventDetail(event) {
       `;
     }
 
+    if (nodeName === "agent") {
+      const llmRun = details.llm_run || null;
+      const stateFields = Object.keys(update).filter((key) => key !== "messages");
+      
+      let llmHtml = "";
+      if (llmRun) {
+        const think = llmRun.think || "";
+        const msg = llmRun.message || llmRun.content || "";
+        const prompt = llmRun.prompts || [];
+        const tokenCount = llmRun.token_count || 0;
+        const status = llmRun.status || "completed";
+        
+        llmHtml = `
+          <div class="agent-llm-section" style="margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 12px;">
+            <div class="detail-grid" style="margin-bottom: 8px;">
+              <div><span class="detail-label">模型状态</span><strong>${escapeHtml(statusLabel(status))}</strong></div>
+              <div><span class="detail-label">模型 Tokens</span><strong>${escapeHtml(tokenCount)}</strong></div>
+            </div>
+            ${prompt && prompt.length ? `
+              <div class="detail-block">
+                <div class="detail-label">📥 发送的 Message (Prompts)</div>
+                <div class="orchestrator-prompts">
+                  ${prompt.map((p) => `
+                    <details class="orchestrator-prompt-details" open>
+                      <summary class="orchestrator-prompt-summary">
+                        <span class="badge neutral">${escapeHtml(p.role || 'prompt')}</span>
+                        <span class="prompt-summary-text">提示词 / 对话上下文</span>
+                      </summary>
+                      <pre class="detail-pre prompt-content">${escapeHtml(p.content)}</pre>
+                    </details>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ""}
+            ${think ? `
+              <div class="detail-block orchestrator-think-block">
+                <div class="detail-label">🧠 LLM 思考过程 (Think)</div>
+                <pre class="detail-pre orchestrator-think">${escapeHtml(think)}</pre>
+              </div>
+            ` : ""}
+            ${msg ? `
+              <div class="detail-block">
+                <div class="detail-label">💬 LLM 输出结果 (Message)</div>
+                <pre class="detail-pre orchestrator-message">${escapeHtml(msg)}</pre>
+              </div>
+            ` : ""}
+          </div>
+        `;
+      }
+      
+      return `
+        <div class="detail-grid">
+          <div><span class="detail-label">节点</span><strong>${escapeHtml(nodeName)}</strong></div>
+          ${stateFields.length ? `<div><span class="detail-label">更新字段</span><strong>${escapeHtml(stateFields.join(", ") || "messages")}</strong></div>` : ""}
+        </div>
+        ${messages.length ? `
+          <div class="detail-block">
+            <div class="detail-label">消息摘要</div>
+            ${renderMessageSummary(messages)}
+          </div>
+        ` : ""}
+        ${toolCalls.length ? `
+          <div class="detail-block">
+            <div class="detail-label">Tool calls</div>
+            <pre class="detail-pre compact">${escapeHtml(JSON.stringify(toolCalls, null, 2))}</pre>
+          </div>
+        ` : ""}
+        ${stateFields.length ? `
+          <div class="detail-block">
+            <div class="detail-label">状态字段</div>
+            <pre class="detail-pre compact">${escapeHtml(JSON.stringify(pickFields(update, stateFields), null, 2))}</pre>
+          </div>
+        ` : ""}
+        ${llmHtml}
+      `;
+    }
+
     const stateFields = Object.keys(update).filter((key) => key !== "messages");
     return `
       <div class="detail-grid">
