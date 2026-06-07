@@ -177,11 +177,44 @@ function renderMessages(messages) {
   els.messageList.scrollTop = els.messageList.scrollHeight;
 }
 
+function calculateEventStepNumbers(events) {
+  const stepMap = new Map();
+  const lastRunStartIndex = events.map((event) => event.type).lastIndexOf("run_start");
+  const routeEvents = lastRunStartIndex >= 0 ? events.slice(lastRunStartIndex) : events;
+
+  let currentRouteNode = "START";
+  let step = 1;
+
+  for (const event of routeEvents) {
+    let targetNode = null;
+
+    if (event.type === "run_start") {
+      targetNode = "orchestrator";
+    } else if (event.type === "node_update") {
+      targetNode = event.node || event.details?.node;
+    } else if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_error" || event.type === "tool_message") {
+      targetNode = "tools";
+    } else if (event.type === "run_complete") {
+      targetNode = "END";
+    }
+
+    if (targetNode && targetNode !== currentRouteNode) {
+      stepMap.set(event.id || `${event.type}-${event.time}`, step);
+      step += 1;
+      currentRouteNode = targetNode;
+    }
+  }
+
+  return stepMap;
+}
+
 function renderEvents(events) {
   if (!events.length) {
     els.eventList.innerHTML = `<div class="empty">暂无事件</div>`;
     return;
   }
+
+  const stepMap = calculateEventStepNumbers(events);
 
   els.eventList.innerHTML = events
     .slice()
@@ -195,11 +228,15 @@ function renderEvents(events) {
       const time = escapeHtml(event.time || "");
       const updatedAt = event.updated_at ? `更新 ${escapeHtml(event.updated_at)}` : "";
       const className = event.type?.includes("error") ? "error" : event.type?.includes("complete") || event.type?.includes("end") ? "success" : "neutral";
+      
+      const stepNum = stepMap.get(rawId);
+      const stepIndicator = stepNum ? `<span class="event-step-number">${stepNum}</span>` : "";
+
       return `
         <div class="event-row ${expanded ? "expanded" : ""}" data-event-id="${id}">
           <div class="event-summary">
             <span class="event-main">
-              <span class="event-title">${title}</span>
+              <span class="event-title">${stepIndicator}${title}</span>
               <span class="event-time">${time}${updatedAt ? ` · ${updatedAt}` : ""}</span>
             </span>
             <span class="badge ${className}">${statusLabel(type)}</span>
