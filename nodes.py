@@ -7,6 +7,7 @@ from langgraph.prebuilt import ToolNode
 from config import llm_client, AgentState, PROMPTS
 from tools import AGENT_TOOLS
 from logger import logger
+from memory_utils import load_static_guidelines, load_agent_notes, trim_messages
 
 # 给大模型绑定物理工具
 llm_with_tools = llm_client.bind_tools(AGENT_TOOLS)
@@ -16,9 +17,19 @@ tools_execution_node = ToolNode(AGENT_TOOLS)
 
 def get_system_prompt(prompt_key: str) -> str:
     current_date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    static_guidelines = load_static_guidelines()
+    agent_notes = load_agent_notes()
     global_prompt = PROMPTS.get("global_context", "").replace("{current_date}", current_date_str)
     specific_prompt = PROMPTS.get(prompt_key, "").replace("{current_date}", current_date_str)
-    return f"{global_prompt}\n\n{specific_prompt}".strip()
+
+    sections = []
+    if static_guidelines:
+        sections.append("【静态全局规则】\n" + static_guidelines)
+    if agent_notes:
+        sections.append(agent_notes)
+    sections.append(global_prompt)
+    sections.append(specific_prompt)
+    return "\n\n".join(sections).strip()
 
 def _silent_config(config: RunnableConfig) -> RunnableConfig:
     silent = dict(config or {})
@@ -87,7 +98,8 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
     logger.info("🧭 \033[94m[Node: Orchestrator]\033[0m 正在判断任务复杂度并更新 todo list...")
     system_prompt = get_system_prompt("orchestrator")
     current_todo_json = json.dumps(state.get("todo_list", []), ensure_ascii=False, indent=2)
-    recent_messages = _summarize_recent_messages(state)
+    trimmed_messages = trim_messages(state["messages"])
+    recent_messages = _summarize_recent_messages({"messages": trimmed_messages})
 
     response = await llm_client.ainvoke([
         SystemMessage(content=system_prompt),
@@ -129,12 +141,11 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
 # ----------------- 核心大脑节点 -----------------
 async def agent_reasoning_node(state: AgentState, config: RunnableConfig):
     logger.info("🧠 \033[92m[Node: Agent Brain]\033[0m 正在分析请求...")
-    # 动态加载 YAML 提示词，包含全局信息
     system_prompt = (
         f"{get_system_prompt('agent_brain')}\n\n"
         f"【Orchestrator 任务计划】\n{_format_todo_context(state)}"
     )
-    messages = [SystemMessage(content=system_prompt)] + state["messages"]
+    messages = [SystemMessage(content=system_prompt)] + trim_messages(state["messages"])
     response = await llm_with_tools.ainvoke(messages, config)
     return {"messages": [response]}
 
@@ -149,6 +160,8 @@ async def evaluate_response_node(state: AgentState, config: RunnableConfig):
 
     user_q = next((m.content for m in reversed(state["messages"][:-1]) if isinstance(m, HumanMessage)), "")
     draft_reply = state["messages"][-1].content
+    trimmed_messages = trim_messages(state["messages"])
+    recent_messages = _summarize_recent_messages({"messages": trimmed_messages})
     
     system_prompt = get_system_prompt("evaluator")
     response = await llm_client.ainvoke([
@@ -156,6 +169,7 @@ async def evaluate_response_node(state: AgentState, config: RunnableConfig):
         HumanMessage(content=(
             f"问题: {user_q}\n\n"
             f"Orchestrator todo 状态:\n{_format_todo_context(state)}\n\n"
+            f"最近上下文摘要:\n{recent_messages}\n\n"
             f"回复:\n{draft_reply}"
         ))
     ], _silent_config(config))

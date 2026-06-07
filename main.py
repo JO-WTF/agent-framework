@@ -6,6 +6,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from config import AgentState, StreamingConsoleCallback
+from memory_utils import trim_messages
 from nodes import orchestrator_node, agent_reasoning_node, tools_execution_node, evaluate_response_node
 from logger import logger
 
@@ -70,6 +71,7 @@ async def main():
             config["configurable"]["thread_id"] = str(uuid.uuid4())
             continue
 
+        memory_messages = trim_messages(memory_messages)
         memory_messages.append(HumanMessage(content=user_input))
         initial_input = {
             "messages": memory_messages,
@@ -83,6 +85,7 @@ async def main():
         try:
             final_state = await agent_app.ainvoke(initial_input, config)
             memory_messages.append(final_state["messages"][-1])
+            memory_messages = trim_messages(memory_messages)
             logger.info("✨ 任务完成。")
         except Exception as e:
             logger.error(f"报错: {str(e)}")

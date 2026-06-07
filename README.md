@@ -17,6 +17,11 @@
 
 运行时，用户在终端输入问题，系统把问题加入 `AgentState.messages`，再交给 LangGraph 状态图驱动。Orchestrator 会先判断任务复杂度；如果是复杂任务，会生成支持分级的 `todo_list`。Agent Brain 后续会带着 todo 上下文推理和行动。工具执行后先回到 Orchestrator 更新 todo 状态，再继续交给 Agent Brain。最终回答会进入 Evaluator 节点做质量检查，不通过则回到 Orchestrator 重新规划。
 
+为了控制长会话上下文，系统已实现：
+- `memory_utils.py` 的 `trim_messages()` 会自动压缩早期对话并保留最近窗口。
+- 根目录 `CLAUDE.md` 支持静态规则注入，每次对话开启都会被加载为系统提示。
+- 自动记忆笔记会把工具失败或大输出的教训写入本地 `agent_memory.json`，并在后续对话中作为参考加载。
+
 ## 2. 运行链路
 
 ```mermaid

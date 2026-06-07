@@ -16,6 +16,21 @@ const els = {
   currentNodeValue: document.getElementById("currentNodeValue"),
 };
 
+const SESSION_STORAGE_KEY = "agent_session_id";
+
+function getSessionId() {
+  let id = localStorage.getItem(SESSION_STORAGE_KEY);
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+      (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+    );
+    localStorage.setItem(SESSION_STORAGE_KEY, id);
+  }
+  return id;
+}
+
+const sessionId = getSessionId();
+
 const expandedEvents = new Set();
 
 function escapeHtml(value) {
@@ -317,14 +332,27 @@ function renderState(state) {
   renderTools(state.tool_runs || []);
 }
 
+function sessionHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "X-Session-Id": sessionId,
+  };
+}
+
 async function loadState() {
-  const response = await fetch("/api/state");
-  renderState(await response.json());
+  const response = await fetch(`/api/state?session_id=${encodeURIComponent(sessionId)}`, {
+    headers: sessionHeaders(),
+  });
+  const state = await response.json();
+  if (state.session_id) {
+    localStorage.setItem(SESSION_STORAGE_KEY, state.session_id);
+  }
+  renderState(state);
 }
 
 function connectWs() {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${protocol}://${window.location.host}/ws`);
+  const ws = new WebSocket(`${protocol}://${window.location.host}/ws?session_id=${encodeURIComponent(sessionId)}`);
 
   ws.addEventListener("open", () => {
     setBadge(els.connectionBadge, "已连接", "success");
@@ -346,9 +374,9 @@ els.chatForm.addEventListener("submit", async (event) => {
   const message = els.messageInput.value.trim();
   if (!message) return;
 
-  const response = await fetch("/api/chat", {
+  const response = await fetch(`/api/chat?session_id=${encodeURIComponent(sessionId)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: sessionHeaders(),
     body: JSON.stringify({ message }),
   });
 
@@ -373,11 +401,17 @@ els.messageInput.addEventListener("keydown", (event) => {
 });
 
 els.stopBtn.addEventListener("click", async () => {
-  await fetch("/api/stop", { method: "POST" });
+  await fetch(`/api/stop?session_id=${encodeURIComponent(sessionId)}`, {
+    method: "POST",
+    headers: sessionHeaders(),
+  });
 });
 
 els.clearBtn.addEventListener("click", async () => {
-  await fetch("/api/clear", { method: "POST" });
+  await fetch(`/api/clear?session_id=${encodeURIComponent(sessionId)}`, {
+    method: "POST",
+    headers: sessionHeaders(),
+  });
   await loadState();
 });
 
