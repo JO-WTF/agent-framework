@@ -352,7 +352,8 @@ async def run_agent(user_text: str, session: ConsoleSession, session_id: str | N
                     if todo_changed or complexity_changed or route_changed:
                         await session.publish({
                             "type": "todo_update",
-                            "title": "Todo 已更新",
+                            "title": "任务计划已更新",
+
                             "details": {
                                 "task_complexity": session.state["task_complexity"],
                                 "previous_task_complexity": previous_complexity,
