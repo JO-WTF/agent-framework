@@ -40,6 +40,35 @@ const ROUTE_GROUPS = [
 let mermaidModulePromise;
 let routeRenderVersion = 0;
 
+if (window.marked) {
+  const renderer = new marked.Renderer();
+  renderer.code = (tokenOrCode, infostring) => {
+    const text = typeof tokenOrCode === "object" && tokenOrCode !== null ? tokenOrCode.text : tokenOrCode;
+    const lang = typeof tokenOrCode === "object" && tokenOrCode !== null ? tokenOrCode.lang : infostring;
+    const language = String(lang || "").split(/\s+/)[0] || "text";
+    const canHighlight = window.hljs && language !== "text" && hljs.getLanguage(language);
+    const highlighted = canHighlight
+      ? hljs.highlight(String(text ?? ""), { language }).value
+      : escapeHtml(text);
+    return `
+      <figure class="code-block">
+        <figcaption>${escapeHtml(language)}</figcaption>
+        <pre><code class="hljs language-${escapeHtml(language)}">${highlighted}</code></pre>
+      </figure>
+    `;
+  };
+  marked.setOptions({
+    breaks: true,
+    gfm: true,
+    renderer,
+  });
+  if (window.markedKatex) {
+    marked.use(window.markedKatex({
+      throwOnError: false
+    }));
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -83,6 +112,16 @@ function setBadge(el, text, className) {
   el.textContent = text;
 }
 
+function renderAssistantMarkdown(content) {
+  if (!window.marked || !window.DOMPurify) {
+    return escapeHtml(content);
+  }
+  return DOMPurify.sanitize(marked.parse(content), {
+    USE_PROFILES: { html: true, mathMl: true },
+    ADD_ATTR: ["class", "style", "xmlns"]
+  });
+}
+
 function renderMessages(messages) {
   if (!messages.length) {
     els.messageList.innerHTML = `<div class="empty">暂无对话</div>`;
@@ -92,7 +131,10 @@ function renderMessages(messages) {
   els.messageList.innerHTML = messages
     .map((message) => {
       const role = escapeHtml(message.role || "assistant");
-      const content = escapeHtml(message.content || "");
+      const rawContent = String(message.content || "");
+      const content = role === "assistant"
+        ? renderAssistantMarkdown(rawContent)
+        : escapeHtml(rawContent);
       return `<div class="message ${role}">${content}</div>`;
     })
     .join("");
@@ -458,8 +500,8 @@ function loadMermaid() {
           flowchart: {
             curve: "basis",
             htmlLabels: false,
-            nodeSpacing: 34,
-            rankSpacing: 34,
+            nodeSpacing: 18,
+            rankSpacing: 22,
           },
           themeVariables: {
             fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
@@ -484,6 +526,15 @@ async function renderMermaidRouteDiagram(definition, version) {
     const diagram = els.routeList.querySelector(".route-diagram");
     if (diagram) {
       diagram.innerHTML = svg;
+      const renderedSvg = diagram.querySelector("svg");
+      if (renderedSvg) {
+        renderedSvg.removeAttribute("height");
+        renderedSvg.removeAttribute("width");
+        renderedSvg.style.maxWidth = "100%";
+        renderedSvg.style.maxHeight = "100%";
+        renderedSvg.style.width = "100%";
+        renderedSvg.style.height = "100%";
+      }
       diagram.classList.remove("loading");
     }
   } catch (error) {

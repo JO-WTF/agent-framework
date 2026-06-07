@@ -210,9 +210,10 @@ textarea {
   padding: 11px 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  white-space: pre-wrap;
   font-size: 14px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .message.user {
@@ -224,12 +225,135 @@ textarea {
 .message.assistant {
   align-self: flex-start;
   background: var(--surface-soft);
+  white-space: normal;
 }
 
 .message.tool {
   align-self: flex-start;
   background: var(--amber-soft);
   border-color: #f6d99a;
+}
+
+.message.assistant > :first-child {
+  margin-top: 0;
+}
+
+.message.assistant > :last-child {
+  margin-bottom: 0;
+}
+
+.message.assistant p,
+.message.assistant ul,
+.message.assistant ol,
+.message.assistant blockquote,
+.message.assistant figure,
+.message.assistant table {
+  margin: 0 0 7px;
+  margin-inline-start: 0;
+  margin-inline-end: 0;
+}
+
+.message.assistant ul,
+.message.assistant ol {
+  padding-left: 17px;
+}
+
+.message.assistant li + li {
+  margin-top: 4px;
+}
+
+.message.assistant :not(pre) > code {
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: #e7edf6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.message.assistant figure.code-block {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #101828;
+  overflow: hidden;
+}
+
+.message.assistant > pre {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #101828;
+  overflow: hidden;
+}
+
+.message.assistant .code-block figcaption {
+  height: 24px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #25304a;
+  background: #182235;
+  color: #cbd5e1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: lowercase;
+}
+
+.message.assistant .code-block pre,
+.message.assistant > pre {
+  margin: 0;
+  max-width: 100%;
+  padding: 8px 9px;
+  overflow: auto;
+  background: #101828;
+  color: #f8fafc;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.message.assistant .code-block code,
+.message.assistant > pre code {
+  display: block;
+  min-width: max-content;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.message.assistant blockquote {
+  padding: 5px 8px;
+  border-left: 3px solid #bdd2fb;
+  border-radius: 5px;
+  background: #eef4ff;
+  color: #344054;
+}
+
+.message.assistant blockquote > :first-child {
+  margin-top: 0;
+}
+
+.message.assistant blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.message.assistant table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.message.assistant th,
+.message.assistant td {
+  padding: 6px 7px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.message.assistant a {
+  color: var(--accent);
 }
 
 .composer {
@@ -298,11 +422,18 @@ textarea {
 }
 
 .timeline-wrap,
-.todo-wrap,
-.route-wrap {
+.todo-wrap {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+.route-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .runtime-panel,
@@ -601,28 +732,36 @@ textarea {
 }
 
 .route-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
 .route-diagram {
-  min-height: 250px;
-  padding: 10px;
+  flex: 1;
+  min-height: 0;
+  padding: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
-  overflow: auto;
+  overflow: hidden;
   color: var(--muted);
   font-size: 12px;
 }
 
 .route-diagram svg {
   width: 100%;
+  height: 100%;
   max-width: 100%;
-  height: auto;
-  min-width: 280px;
+  max-height: 100%;
+  object-fit: contain;
+  min-width: 0;
+  display: block;
 }
 
 .route-diagram.loading {
