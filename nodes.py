@@ -5,7 +5,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.prebuilt import ToolNode
 from config import llm_client, AgentState, PROMPTS
-from tools import AGENT_TOOLS
+from tools import AGENT_TOOLS, set_session_id
 from logger import logger
 from memory_utils import load_static_guidelines, load_agent_notes, trim_messages
 
@@ -13,7 +13,14 @@ from memory_utils import load_static_guidelines, load_agent_notes, trim_messages
 llm_with_tools = llm_client.bind_tools(AGENT_TOOLS)
 
 # 官方预置的执行节点 (自动解析 JSON 并执行 tools.py 里的函数)
-tools_execution_node = ToolNode(AGENT_TOOLS)
+_base_tools_execution_node = ToolNode(AGENT_TOOLS)
+
+
+async def tools_execution_node(state: AgentState):
+    """Custom tool execution node with session_id context."""
+    session_id = state.get("session_id", "cli")
+    set_session_id(session_id)
+    return await _base_tools_execution_node.ainvoke(state)
 
 def get_system_prompt(prompt_key: str) -> str:
     current_date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -98,7 +105,8 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
     logger.info("🧭 \033[94m[Node: Orchestrator]\033[0m 正在判断任务复杂度并更新 todo list...")
     system_prompt = get_system_prompt("orchestrator")
     current_todo_json = json.dumps(state.get("todo_list", []), ensure_ascii=False, indent=2)
-    trimmed_messages = trim_messages(state["messages"])
+    session_id = state.get("session_id")
+    trimmed_messages = trim_messages(state["messages"], session_id=session_id)
     recent_messages = _summarize_recent_messages({"messages": trimmed_messages})
 
     response = await llm_client.ainvoke([
@@ -145,7 +153,8 @@ async def agent_reasoning_node(state: AgentState, config: RunnableConfig):
         f"{get_system_prompt('agent_brain')}\n\n"
         f"【Orchestrator 任务计划】\n{_format_todo_context(state)}"
     )
-    messages = [SystemMessage(content=system_prompt)] + trim_messages(state["messages"])
+    session_id = state.get("session_id")
+    messages = [SystemMessage(content=system_prompt)] + trim_messages(state["messages"], session_id=session_id)
     response = await llm_with_tools.ainvoke(messages, config)
     return {"messages": [response]}
 
@@ -160,7 +169,8 @@ async def evaluate_response_node(state: AgentState, config: RunnableConfig):
 
     user_q = next((m.content for m in reversed(state["messages"][:-1]) if isinstance(m, HumanMessage)), "")
     draft_reply = state["messages"][-1].content
-    trimmed_messages = trim_messages(state["messages"])
+    session_id = state.get("session_id")
+    trimmed_messages = trim_messages(state["messages"], session_id=session_id)
     recent_messages = _summarize_recent_messages({"messages": trimmed_messages})
     
     system_prompt = get_system_prompt("evaluator")

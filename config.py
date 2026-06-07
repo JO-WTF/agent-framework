@@ -17,9 +17,10 @@ with open("prompts.yaml", "r", encoding="utf-8") as f:
 
 # 定义 ReAct 状态流
 class AgentState(TypedDict):
-    messages: Annotated[list, add_messages] 
-    revision_count: int  
+    messages: Annotated[list, add_messages]
+    revision_count: int
     eval_status: str
+    session_id: NotRequired[str]  # Session identifier for data storage
     task_complexity: NotRequired[str]
     todo_list: NotRequired[list[dict[str, Any]]]
     orchestrator_next: NotRequired[str]
@@ -43,7 +44,7 @@ def get_llm_client():
     api_key = os.getenv("LLM_API_KEY")
     base_url = os.getenv("LLM_BASE_URL")
     temperature = float(os.getenv("LLM_TEMPERATURE", "0.1"))
-    
+
     # 绝大部分现代接口（包括 DeepSeek, Ollama, llama.cpp）都兼容 OpenAI API 格式
     # 因此我们可以统一使用 ChatOpenAI，只需根据服务商调整参数
     client_kwargs = {

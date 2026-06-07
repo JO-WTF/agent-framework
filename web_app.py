@@ -262,7 +262,7 @@ def resolve_session(request: Request) -> tuple[str, ConsoleSession]:
     return manager.get_session(session_id)
 
 
-async def run_agent(user_text: str, session: ConsoleSession) -> None:
+async def run_agent(user_text: str, session: ConsoleSession, session_id: str | None = None) -> None:
     user_message = HumanMessage(content=user_text)
     session.memory_messages.append(user_message)
     session.state.update({
@@ -280,11 +280,12 @@ async def run_agent(user_text: str, session: ConsoleSession) -> None:
         "details": {"user_message": user_text, "thread_id": session.thread_id},
     })
 
-    session.memory_messages = trim_messages(session.memory_messages)
+    session.memory_messages = trim_messages(session.memory_messages, session_id=session_id)
     initial_input = {
         "messages": session.memory_messages,
         "revision_count": 0,
         "eval_status": "",
+        "session_id": session_id or "cli",
         "task_complexity": "unknown",
         "todo_list": [],
         "orchestrator_next": "agent",
@@ -354,7 +355,7 @@ async def run_agent(user_text: str, session: ConsoleSession) -> None:
 
         if final_reply:
             session.memory_messages.append(final_reply)
-            session.memory_messages = trim_messages(session.memory_messages)
+            session.memory_messages = trim_messages(session.memory_messages, session_id=session_id)
             session.state["messages"] = [serialize_message(m) for m in session.memory_messages]
 
         session.state["status"] = "idle"
@@ -397,7 +398,7 @@ async def chat(request: Request, payload: ChatRequest):
     if session.running_task and not session.running_task.done():
         raise HTTPException(status_code=409, detail="agent is already running")
 
-    session.running_task = asyncio.create_task(run_agent(message, session))
+    session.running_task = asyncio.create_task(run_agent(message, session, session_id))
     return {"status": "started", "session_id": session_id}
 
 

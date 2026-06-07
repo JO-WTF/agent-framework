@@ -20,7 +20,7 @@ def should_continue(state: AgentState) -> str:
 
 def route_after_evaluation(state: AgentState) -> str:
     """质检完去哪儿？通过就结束，不通过就回大脑"""
-    if state["eval_status"] == "PASS": 
+    if state["eval_status"] == "PASS":
         return "end"
     return "orchestrator"
 
@@ -49,9 +49,9 @@ async def main():
     agent_app = build_agent_graph()
     config = {
         "configurable": {"thread_id": str(uuid.uuid4())},
-        "callbacks": [StreamingConsoleCallback()]  
+        "callbacks": [StreamingConsoleCallback()]
     }
-    
+
     print("\n" + "="*70)
     logger.info("🚀 企业级 ReAct Tool-Calling Agent 已启动")
     logger.info("💡 指令: /clear 清空长期记忆 | /quit 退出")
@@ -62,7 +62,7 @@ async def main():
     while True:
         print("\n" + "-"*70)
         user_input = input("🧑 [请输入指令或问题]:\n> ").strip()
-        
+
         if not user_input: continue
         if user_input.lower() in ['/quit', '/exit', '/q']: break
         if user_input.lower() == '/clear':
@@ -71,12 +71,13 @@ async def main():
             config["configurable"]["thread_id"] = str(uuid.uuid4())
             continue
 
-        memory_messages = trim_messages(memory_messages)
+        memory_messages = trim_messages(memory_messages, session_id="cli")
         memory_messages.append(HumanMessage(content=user_input))
         initial_input = {
             "messages": memory_messages,
             "revision_count": 0,
             "eval_status": "",
+            "session_id": "cli",
             "task_complexity": "unknown",
             "todo_list": [],
             "orchestrator_next": "agent",
@@ -85,7 +86,7 @@ async def main():
         try:
             final_state = await agent_app.ainvoke(initial_input, config)
             memory_messages.append(final_state["messages"][-1])
-            memory_messages = trim_messages(memory_messages)
+            memory_messages = trim_messages(memory_messages, session_id="cli")
             logger.info("✨ 任务完成。")
         except Exception as e:
             logger.error(f"报错: {str(e)}")

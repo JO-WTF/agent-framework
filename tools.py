@@ -3,10 +3,34 @@ import asyncio
 import contextlib
 import traceback
 import subprocess
+from contextvars import ContextVar
 from langchain_core.tools import tool
 from config import search_client, PROMPTS
 from logger import logger
 from memory_utils import save_agent_note, store_tool_result, summarize_text
+
+# Context variable to pass session_id to tools
+_session_id: ContextVar[str | None] = ContextVar("_session_id", default=None)
+
+
+def set_session_id(session_id: str | None) -> None:
+    """Set the current session ID for tool execution."""
+    _session_id.set(session_id)
+
+
+def get_session_id() -> str | None:
+    """Get the current session ID."""
+    return _session_id.get()
+
+
+def _store_tool_result_with_session(tool_name: str, raw_output: str, metadata: dict | None = None) -> str:
+    """Wrapper to store tool result with automatic session ID."""
+    session_id = get_session_id()
+    if not session_id:
+        # Fallback for CLI mode - use a default session
+        session_id = "cli"
+        set_session_id(session_id)
+    return store_tool_result(tool_name, raw_output, session_id=session_id, metadata=metadata)
 
 # 1. 网络搜索工具
 @tool(description=PROMPTS["tools"]["search_web"])
@@ -32,7 +56,7 @@ async def run_python(code: str) -> str:
             exec(code, namespace)
         out = output_buffer.getvalue().strip()
         if out and len(out) > 1024:
-            ref_id = store_tool_result("run_python", out, {"source": "run_python"})
+            ref_id = _store_tool_result_with_session("run_python", out, {"source": "run_python"})
             summary = summarize_text(out, max_chars=512)
             return f"Python 输出过长，已保存为引用 {ref_id}。\n摘要:\n{summary}"
         return out if out else "代码执行成功 (无 print 输出)。"
@@ -71,7 +95,7 @@ async def run_command(command: str) -> str:
 
         text = "\n".join(result)
         if len(text) > 1024:
-            ref_id = store_tool_result("run_command", text, {"command": command})
+            ref_id = _store_tool_result_with_session("run_command", text, {"command": command})
             summary = summarize_text(text, max_chars=512)
             return f"命令输出过长，已保存为引用 {ref_id}。\n摘要:\n{summary}"
         return text
