@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.callbacks import AsyncCallbackHandler
@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel
 
 from main import build_agent_graph
+from memory_utils import trim_messages
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -21,6 +22,44 @@ STATIC_DIR = BASE_DIR / "static"
 
 class ChatRequest(BaseModel):
     message: str
+
+
+class ConsoleSession:
+    def __init__(self) -> None:
+        self.agent_app = build_agent_graph()
+        self.thread_id = str(uuid.uuid4())
+        self.memory_messages = []
+        self.running_task: asyncio.Task | None = None
+        self.subscribers: set[asyncio.Queue] = set()
+        self.state: dict[str, Any] = {
+            "status": "idle",
+            "current_node": "",
+            "task_complexity": "unknown",
+            "todo_list": [],
+            "model_output": "",
+            "tool_runs": [],
+            "events": [],
+            "messages": [],
+        }
+
+
+class SessionManager:
+    def __init__(self) -> None:
+        self.sessions: dict[str, ConsoleSession] = {}
+
+    def create_session(self) -> tuple[str, ConsoleSession]:
+        session_id = str(uuid.uuid4())
+        session = ConsoleSession()
+        self.sessions[session_id] = session
+        return session_id, session
+
+    def get_session(self, session_id: str | None) -> tuple[str, ConsoleSession]:
+        if session_id and session_id in self.sessions:
+            return session_id, self.sessions[session_id]
+        return self.create_session()
+
+    def remove_session(self, session_id: str) -> None:
+        self.sessions.pop(session_id, None)
 
 
 class ConsoleSession:
@@ -110,15 +149,18 @@ class ConsoleSession:
         })
 
 
-session = ConsoleSession()
+manager = SessionManager()
 app = FastAPI(title="Agent Console")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 class WebConsoleCallback(AsyncCallbackHandler):
+    def __init__(self, session: ConsoleSession) -> None:
+        self.session = session
+
     async def on_llm_start(self, serialized, prompts, **kwargs):
-        session.state["current_node"] = "agent"
-        await session.publish({
+        self.session.state["current_node"] = "agent"
+        await self.session.publish({
             "type": "llm_start",
             "title": "模型开始输出",
             "details": {"prompts": prompts},
@@ -127,14 +169,14 @@ class WebConsoleCallback(AsyncCallbackHandler):
     async def on_llm_new_token(self, token: str, **kwargs) -> None:
         if not token:
             return
-        session.state["model_output"] += token
-        await session.publish_llm_token(token)
+        self.session.state["model_output"] += token
+        await self.session.publish_llm_token(token)
 
     async def on_llm_end(self, response, **kwargs):
-        await session.publish({
+        await self.session.publish({
             "type": "llm_end",
             "title": "模型输出结束",
-            "details": {"content": session.state["model_output"]},
+            "details": {"content": self.session.state["model_output"]},
         })
 
     async def on_tool_start(self, serialized, input_str, **kwargs):
@@ -148,9 +190,9 @@ class WebConsoleCallback(AsyncCallbackHandler):
             "started_at": datetime.now().strftime("%H:%M:%S"),
             "ended_at": "",
         }
-        session.state["tool_runs"].append(run)
-        session.state["current_node"] = "tools"
-        await session.publish({
+        self.session.state["tool_runs"].append(run)
+        self.session.state["current_node"] = "tools"
+        await self.session.publish({
             "type": "tool_start",
             "title": f"调用工具 {name}",
             "tool": run,
@@ -158,13 +200,13 @@ class WebConsoleCallback(AsyncCallbackHandler):
         })
 
     async def on_tool_end(self, output, **kwargs):
-        if session.state["tool_runs"]:
-            run = session.state["tool_runs"][-1]
+        if self.session.state["tool_runs"]:
+            run = self.session.state["tool_runs"][-1]
             output_content = getattr(output, "content", str(output))
             run["status"] = "success"
             run["output"] = output_content
             run["ended_at"] = datetime.now().strftime("%H:%M:%S")
-            await session.publish({
+            await self.session.publish({
                 "type": "tool_end",
                 "title": f"工具完成 {run['name']}",
                 "tool": run,
@@ -172,12 +214,12 @@ class WebConsoleCallback(AsyncCallbackHandler):
             })
 
     async def on_tool_error(self, error, **kwargs):
-        if session.state["tool_runs"]:
-            run = session.state["tool_runs"][-1]
+        if self.session.state["tool_runs"]:
+            run = self.session.state["tool_runs"][-1]
             run["status"] = "error"
             run["output"] = str(error)
             run["ended_at"] = datetime.now().strftime("%H:%M:%S")
-            await session.publish({
+            await self.session.publish({
                 "type": "tool_error",
                 "title": f"工具失败 {run['name']}",
                 "tool": run,
@@ -215,7 +257,12 @@ def normalized_json(value: Any) -> str:
     return json.dumps(make_json_safe(value), ensure_ascii=False, sort_keys=True)
 
 
-async def run_agent(user_text: str) -> None:
+def resolve_session(request: Request) -> tuple[str, ConsoleSession]:
+    session_id = request.headers.get("X-Session-Id") or request.query_params.get("session_id")
+    return manager.get_session(session_id)
+
+
+async def run_agent(user_text: str, session: ConsoleSession) -> None:
     user_message = HumanMessage(content=user_text)
     session.memory_messages.append(user_message)
     session.state.update({
@@ -233,6 +280,7 @@ async def run_agent(user_text: str) -> None:
         "details": {"user_message": user_text, "thread_id": session.thread_id},
     })
 
+    session.memory_messages = trim_messages(session.memory_messages)
     initial_input = {
         "messages": session.memory_messages,
         "revision_count": 0,
@@ -243,7 +291,7 @@ async def run_agent(user_text: str) -> None:
     }
     config = {
         "configurable": {"thread_id": session.thread_id},
-        "callbacks": [WebConsoleCallback()],
+        "callbacks": [WebConsoleCallback(session)],
     }
 
     final_reply: AIMessage | None = None
@@ -306,7 +354,8 @@ async def run_agent(user_text: str) -> None:
 
         if final_reply:
             session.memory_messages.append(final_reply)
-            session.state["messages"].append(serialize_message(final_reply))
+            session.memory_messages = trim_messages(session.memory_messages)
+            session.state["messages"] = [serialize_message(m) for m in session.memory_messages]
 
         session.state["status"] = "idle"
         session.state["current_node"] = ""
@@ -334,24 +383,27 @@ async def index():
 
 
 @app.get("/api/state")
-async def get_state():
-    return session.snapshot()
+async def get_state(request: Request):
+    session_id, session = resolve_session(request)
+    return {"session_id": session_id, **session.snapshot()}
 
 
 @app.post("/api/chat")
-async def chat(request: ChatRequest):
-    message = request.message.strip()
+async def chat(request: Request, payload: ChatRequest):
+    session_id, session = resolve_session(request)
+    message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
     if session.running_task and not session.running_task.done():
         raise HTTPException(status_code=409, detail="agent is already running")
 
-    session.running_task = asyncio.create_task(run_agent(message))
-    return {"status": "started"}
+    session.running_task = asyncio.create_task(run_agent(message, session))
+    return {"status": "started", "session_id": session_id}
 
 
 @app.post("/api/stop")
-async def stop():
+async def stop(request: Request):
+    _, session = resolve_session(request)
     if session.running_task and not session.running_task.done():
         session.running_task.cancel()
         return {"status": "stopping"}
@@ -359,7 +411,8 @@ async def stop():
 
 
 @app.post("/api/clear")
-async def clear():
+async def clear(request: Request):
+    _, session = resolve_session(request)
     session.clear()
     await session.publish({"type": "clear", "title": "会话已清空", "details": {"status": "idle"}})
     return {"status": "cleared"}
@@ -367,6 +420,8 @@ async def clear():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    session_id = websocket.query_params.get("session_id")
+    session_id, session = manager.get_session(session_id)
     await websocket.accept()
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     session.subscribers.add(queue)
