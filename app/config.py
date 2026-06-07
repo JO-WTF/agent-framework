@@ -25,6 +25,8 @@ class AgentState(TypedDict):
     task_complexity: NotRequired[str]
     todo_list: NotRequired[list[dict[str, Any]]]
     orchestrator_next: NotRequired[str]
+    orchestrator_think: NotRequired[str]
+    orchestrator_message: NotRequired[str]
 
 # 控制台绚丽日志回调
 class StreamingConsoleCallback(AsyncCallbackHandler):

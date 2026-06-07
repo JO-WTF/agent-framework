@@ -33,8 +33,21 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
         ))
     ], silent_config(config))
 
+    import re
+
+    think_content = ""
+    message_content = response.content or ""
+    if hasattr(response, "additional_kwargs") and isinstance(response.additional_kwargs, dict):
+        think_content = response.additional_kwargs.get("reasoning_content", "") or ""
+
+    match = re.search(r"<think>(.*?)</think>", response.content, re.DOTALL) if response.content else None
+    if match:
+        if not think_content:
+            think_content = match.group(1).strip()
+        message_content = response.content.replace(match.group(0), "").strip()
+
     try:
-        parsed = parse_json_object(response.content)
+        parsed = parse_json_object(message_content)
         complexity = parsed.get("task_complexity", state.get("task_complexity", "simple"))
         todo_list = parsed.get("todo_list", state.get("todo_list", []))
         next_node = parsed.get("next", default_orchestrator_next(state))
@@ -60,4 +73,7 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
         "task_complexity": complexity,
         "todo_list": todo_list,
         "orchestrator_next": next_node,
+        "orchestrator_think": think_content,
+        "orchestrator_message": message_content,
     }
+

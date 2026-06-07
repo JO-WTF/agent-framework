@@ -217,12 +217,44 @@ function renderEventDetail(event) {
 
   if (type === "node_update") {
     const update = details.update || {};
+    const nodeName = details.node || event.node || "-";
     const messages = update.messages || [];
     const toolCalls = messages.flatMap((message) => message.tool_calls || []);
+
+    if (nodeName === "orchestrator") {
+      const think = update.orchestrator_think || "";
+      const msg = update.orchestrator_message || "";
+      const stateFields = Object.keys(update).filter((key) => key !== "messages" && key !== "orchestrator_think" && key !== "orchestrator_message");
+      return `
+        <div class="detail-grid">
+          <div><span class="detail-label">节点</span><strong>${escapeHtml(nodeName)}</strong></div>
+          <div><span class="detail-label">更新字段</span><strong>${escapeHtml(Object.keys(update).filter(k => k !== "messages").join(", ") || "-")}</strong></div>
+        </div>
+        ${think ? `
+          <div class="detail-block orchestrator-think-block">
+            <div class="detail-label">🧠 LLM 思考过程 (Think)</div>
+            <pre class="detail-pre orchestrator-think">${escapeHtml(think)}</pre>
+          </div>
+        ` : ""}
+        ${msg ? `
+          <div class="detail-block">
+            <div class="detail-label">💬 LLM 输出结果 (Message)</div>
+            <pre class="detail-pre orchestrator-message">${escapeHtml(msg)}</pre>
+          </div>
+        ` : ""}
+        ${stateFields.length ? `
+          <div class="detail-block">
+            <div class="detail-label">状态字段更新</div>
+            <pre class="detail-pre compact">${escapeHtml(JSON.stringify(pickFields(update, stateFields), null, 2))}</pre>
+          </div>
+        ` : ""}
+      `;
+    }
+
     const stateFields = Object.keys(update).filter((key) => key !== "messages");
     return `
       <div class="detail-grid">
-        <div><span class="detail-label">节点</span><strong>${escapeHtml(details.node || event.node || "-")}</strong></div>
+        <div><span class="detail-label">节点</span><strong>${escapeHtml(nodeName)}</strong></div>
         <div><span class="detail-label">更新字段</span><strong>${escapeHtml(stateFields.join(", ") || "messages")}</strong></div>
       </div>
       <div class="detail-block">

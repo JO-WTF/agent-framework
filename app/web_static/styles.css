@@ -802,3 +802,17 @@ textarea {
     flex-wrap: wrap;
   }
 }
+
+.orchestrator-think-block {
+  border-left: 3px solid #8b5cf6;
+  background: #fbfbfe;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.orchestrator-think {
+  color: #5b21b6;
+  font-style: italic;
+  max-height: 200px;
+}
+
