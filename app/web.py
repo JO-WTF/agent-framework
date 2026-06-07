@@ -370,7 +370,8 @@ async def run_agent(user_text: str, session: ConsoleSession, session_id: str | N
                     complexity_changed = previous_complexity != next_complexity
                     route_changed = previous_next != next_route
 
-                    if todo_changed or complexity_changed or route_changed:
+                    if todo_changed:
+
                         await session.publish({
                             "type": "todo_update",
                             "title": "任务计划已更新",
