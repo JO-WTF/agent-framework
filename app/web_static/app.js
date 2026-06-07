@@ -89,10 +89,12 @@ function statusLabel(status) {
     completed: "完成",
     blocked: "阻塞",
     success: "成功",
+    llm_run: "模型调用",
     llm_token: "模型输出",
     llm_start: "模型开始",
     llm_end: "模型结束",
     node_update: "节点",
+
     todo_update: "Todo",
     tool_start: "Tool 开始",
     tool_end: "Tool 完成",
@@ -112,15 +114,49 @@ function setBadge(el, text, className) {
   el.textContent = text;
 }
 
+function parseThinkingContent(content) {
+  let think = "";
+  let message = content;
+
+  const thinkStart = content.indexOf("<think>");
+  if (thinkStart !== -1) {
+    const thinkEnd = content.indexOf("</think>", thinkStart + 7);
+    if (thinkEnd !== -1) {
+      think = content.substring(thinkStart + 7, thinkEnd).trim();
+      message = (content.substring(0, thinkStart) + content.substring(thinkEnd + 8)).trim();
+    } else {
+      think = content.substring(thinkStart + 7).trim();
+      message = content.substring(0, thinkStart).trim();
+    }
+  }
+  return { think, message };
+}
+
 function renderAssistantMarkdown(content) {
   if (!window.marked || !window.DOMPurify) {
     return escapeHtml(content);
   }
-  return DOMPurify.sanitize(marked.parse(content), {
-    USE_PROFILES: { html: true, mathMl: true },
-    ADD_ATTR: ["class", "style", "xmlns"]
-  });
+  const { think, message } = parseThinkingContent(content);
+  let html = "";
+  if (think) {
+    html += `
+      <details class="chat-think-details" open>
+        <summary class="chat-think-summary">🧠 思考过程 (点击收起/展开)</summary>
+        <div class="chat-think-content">${escapeHtml(think)}</div>
+      </details>
+    `;
+  }
+  if (message) {
+    html += DOMPurify.sanitize(marked.parse(message), {
+      USE_PROFILES: { html: true, mathMl: true },
+      ADD_ATTR: ["class", "style", "xmlns"]
+    });
+  } else if (!think) {
+    html += escapeHtml(content);
+  }
+  return html;
 }
+
 
 function renderMessages(messages) {
   if (!messages.length) {
@@ -180,14 +216,49 @@ function renderEventDetail(event) {
   const details = event.details && Object.keys(event.details).length ? event.details : event;
   const type = event.type || "";
 
-  if (type === "llm_token" || type === "llm_end") {
+  if (type === "llm_run" || type === "llm_token" || type === "llm_end") {
+    const think = details.think || "";
+    const msg = details.message || details.content || "";
+    const prompt = details.prompts || [];
+    const tokenCount = details.token_count || 0;
+    const status = details.status || "completed";
+
     return `
-      <div class="detail-block">
-        <div class="detail-label">输出内容</div>
-        <pre class="detail-pre">${escapeHtml(details.content || "")}</pre>
+      <div class="detail-grid">
+        <div><span class="detail-label">状态</span><strong>${escapeHtml(statusLabel(status))}</strong></div>
+        <div><span class="detail-label">Tokens</span><strong>${escapeHtml(tokenCount)}</strong></div>
       </div>
+      ${prompt && prompt.length ? `
+        <div class="detail-block">
+          <div class="detail-label">📥 发送的 Message (Prompts)</div>
+          <div class="orchestrator-prompts">
+            ${prompt.map((p) => `
+              <details class="orchestrator-prompt-details" open>
+                <summary class="orchestrator-prompt-summary">
+                  <span class="badge neutral">${escapeHtml(p.role || 'prompt')}</span>
+                  <span class="prompt-summary-text">提示词 / 对话上下文</span>
+                </summary>
+                <pre class="detail-pre prompt-content">${escapeHtml(p.content)}</pre>
+              </details>
+            `).join("")}
+          </div>
+        </div>
+      ` : ""}
+      ${think ? `
+        <div class="detail-block orchestrator-think-block">
+          <div class="detail-label">🧠 LLM 思考过程 (Think)</div>
+          <pre class="detail-pre orchestrator-think">${escapeHtml(think)}</pre>
+        </div>
+      ` : ""}
+      ${msg ? `
+        <div class="detail-block">
+          <div class="detail-label">💬 LLM 输出结果 (Message)</div>
+          <pre class="detail-pre orchestrator-message">${escapeHtml(msg)}</pre>
+        </div>
+      ` : ""}
     `;
   }
+
 
   if (type.startsWith("tool_")) {
     return `<div class="detail-kv">

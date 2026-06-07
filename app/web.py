@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -18,6 +19,21 @@ from app.runtime_paths import STATIC_DIR
 
 class ChatRequest(BaseModel):
     message: str
+
+
+def parse_thinking_content(content: str) -> tuple[str, str]:
+    think = ""
+    message = content
+    think_start = content.find("<think>")
+    if think_start != -1:
+        think_end = content.find("</think>", think_start + 7)
+        if think_end != -1:
+            think = content[think_start + 7 : think_end].strip()
+            message = (content[:think_start] + content[think_end + 8 :]).strip()
+        else:
+            think = content[think_start + 7 :].strip()
+            message = content[:think_start].strip()
+    return think, message
 
 
 class ConsoleSession:
@@ -55,32 +71,68 @@ class ConsoleSession:
         append_session_event(self.session_id, event)
         await self.broadcast(event)
 
-    async def publish_llm_token(self, token: str) -> None:
+    async def start_llm_run(self, prompts: list[str]) -> None:
         now = datetime.now().strftime("%H:%M:%S")
-        events = self.state["events"]
-        last_event = events[-1] if events else None
-
-        if last_event and last_event.get("type") == "llm_token":
-            details = last_event.setdefault("details", {})
-            details["content"] = f"{details.get('content', '')}{token}"
-            details["token_count"] = details.get("token_count", 0) + 1
-            last_event["title"] = f"模型流式输出 ({details['token_count']} tokens)"
-            last_event["updated_at"] = now
-            await self.broadcast(last_event)
-            return
+        formatted_prompts = []
+        for p in prompts:
+            if isinstance(p, str):
+                formatted_prompts.append({"role": "prompt", "content": p})
+            else:
+                formatted_prompts.append({"role": "prompt", "content": str(p)})
 
         event = {
             "id": str(uuid.uuid4()),
             "time": now,
             "updated_at": "",
-            "type": "llm_token",
-            "title": "模型流式输出 (1 token)",
-            "details": {"content": token, "token_count": 1},
+            "type": "llm_run",
+            "title": "模型调用 (开始)",
+            "details": {
+                "prompts": formatted_prompts,
+                "content": "",
+                "think": "",
+                "message": "",
+                "token_count": 0,
+                "status": "running",
+            },
         }
-        events.append(event)
-        self.state["events"] = events[-200:]
+        self.state["events"].append(event)
+        self.state["events"] = self.state["events"][-200:]
         append_session_event(self.session_id, event)
         await self.broadcast(event)
+
+    async def update_llm_run_token(self, token: str) -> None:
+        now = datetime.now().strftime("%H:%M:%S")
+        events = self.state["events"]
+        last_event = events[-1] if events else None
+
+        if last_event and last_event.get("type") == "llm_run":
+            details = last_event.setdefault("details", {})
+            content = f"{details.get('content', '')}{token}"
+            details["content"] = content
+            details["token_count"] = details.get("token_count", 0) + 1
+
+            # Parse think and message
+            think, message = parse_thinking_content(content)
+            details["think"] = think
+            details["message"] = message
+
+            last_event["title"] = f"模型调用 (进行中, {details['token_count']} tokens)"
+            last_event["updated_at"] = now
+            await self.broadcast(last_event)
+
+    async def complete_llm_run(self) -> None:
+        now = datetime.now().strftime("%H:%M:%S")
+        events = self.state["events"]
+        last_event = events[-1] if events else None
+
+        if last_event and last_event.get("type") == "llm_run":
+            details = last_event.setdefault("details", {})
+            details["status"] = "completed"
+            last_event["title"] = f"模型调用完成 ({details.get('token_count', 0)} tokens)"
+            last_event["updated_at"] = now
+            append_session_event(self.session_id, last_event)
+            await self.broadcast(last_event)
+
 
     async def broadcast(self, event: dict[str, Any]) -> None:
         stale = []
@@ -140,24 +192,17 @@ class WebConsoleCallback(AsyncCallbackHandler):
 
     async def on_llm_start(self, serialized, prompts, **kwargs):
         self.session.state["current_node"] = "agent"
-        await self.session.publish({
-            "type": "llm_start",
-            "title": "模型开始输出",
-            "details": {"prompts": prompts},
-        })
+        await self.session.start_llm_run(prompts)
 
     async def on_llm_new_token(self, token: str, **kwargs) -> None:
         if not token:
             return
         self.session.state["model_output"] += token
-        await self.session.publish_llm_token(token)
+        await self.session.update_llm_run_token(token)
 
     async def on_llm_end(self, response, **kwargs):
-        await self.session.publish({
-            "type": "llm_end",
-            "title": "模型输出结束",
-            "details": {"content": self.session.state["model_output"]},
-        })
+        await self.session.complete_llm_run()
+
 
     async def on_tool_start(self, serialized, input_str, **kwargs):
         name = serialized.get("name", "unknown_tool") if isinstance(serialized, dict) else "unknown_tool"

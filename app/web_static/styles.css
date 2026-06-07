@@ -857,4 +857,37 @@ textarea {
   background: #fbfcfe;
 }
 
+.chat-think-details {
+  border-left: 2px dashed #93c5fd;
+  background: #f8fafc;
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.chat-think-details[open] {
+  border-left: 2px solid #3b82f6;
+}
+
+.chat-think-summary {
+  font-size: 11px;
+  color: #1e3a8a;
+  cursor: pointer;
+  font-weight: 700;
+  user-select: none;
+}
+
+.chat-think-content {
+  font-size: 11px;
+  color: #475569;
+  font-style: italic;
+  white-space: pre-wrap;
+  margin-top: 6px;
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+
 
