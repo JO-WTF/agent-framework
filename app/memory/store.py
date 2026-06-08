@@ -18,9 +18,8 @@ MAX_ARCHIVE_RECORDS = 200
 MAX_TOOL_RESULTS = 200
 MAX_SUMMARY_CHARS = 1024
 MAX_NOTE_SUMMARY_CHARS = 200
-MAX_CONTEXT_SIZE_BYTES_CAP = 512 * 1024
-DEFAULT_MAX_CONTEXT_SIZE_BYTES = MAX_CONTEXT_SIZE_BYTES_CAP
-MAX_CONTEXT_SIZE_ENV = "MAX_CONTEXT_SIZE_BYTES"
+DEFAULT_MAX_CONTEXT_SIZE_KB = 512
+MAX_CONTEXT_SIZE_KB_ENV = "MAX_CONTEXT_SIZE_KB"
 
 
 def _ensure_dirs() -> None:
@@ -136,15 +135,19 @@ def _serialize_message(message: Any) -> dict[str, Any]:
     }
 
 
-def get_max_context_size_bytes() -> int:
-    raw_value = os.getenv(MAX_CONTEXT_SIZE_ENV, str(DEFAULT_MAX_CONTEXT_SIZE_BYTES)).strip()
+def get_max_context_size_kb() -> int:
+    raw_value = os.getenv(MAX_CONTEXT_SIZE_KB_ENV, str(DEFAULT_MAX_CONTEXT_SIZE_KB)).strip()
     try:
         configured = int(raw_value)
     except ValueError:
-        configured = DEFAULT_MAX_CONTEXT_SIZE_BYTES
+        configured = DEFAULT_MAX_CONTEXT_SIZE_KB
     if configured <= 0:
-        configured = DEFAULT_MAX_CONTEXT_SIZE_BYTES
-    return min(configured, MAX_CONTEXT_SIZE_BYTES_CAP)
+        configured = DEFAULT_MAX_CONTEXT_SIZE_KB
+    return configured
+
+
+def get_max_context_size_bytes() -> int:
+    return get_max_context_size_kb() * 1024
 
 
 def _message_size_bytes(message: Any) -> int:

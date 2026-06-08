@@ -193,7 +193,7 @@ Web UI 是一个轻量 FastAPI 应用，复用同一个 LangGraph agent：
 | `LLM_API_KEY` | 通用模型 API Key |
 | `LLM_BASE_URL` | OpenAI 兼容接口地址，可选 |
 | `LLM_TEMPERATURE` | 模型温度，默认 `0.1` |
-| `MAX_CONTEXT_SIZE_BYTES` | 最大序列化对话上下文尺寸，单位 bytes；默认 `524288`，配置值超过 `524288` 会被限制为 512KB |
+| `MAX_CONTEXT_SIZE_KB` | 最大序列化对话上下文尺寸，单位 KB；默认 `512` |
 | `TAVILY_API_KEY` | Tavily 搜索 API Key |
 
 不要把真实 `.env` 提交到公开仓库。当前仓库中 `.gitignore` 已忽略 `.env` 和 `.venv`。
