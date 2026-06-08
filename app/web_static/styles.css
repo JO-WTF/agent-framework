@@ -146,7 +146,8 @@ textarea {
   color: var(--accent);
 }
 
-.badge.pending {
+.badge.pending,
+.badge.awaiting_approval {
   background: var(--surface-soft);
   color: var(--muted);
 }
@@ -193,6 +194,86 @@ textarea {
 
 .button.ghost {
   background: var(--surface);
+}
+
+.approval-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.approval-list.empty {
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.approval-card {
+  border: 1px solid #f3d29b;
+  border-radius: 8px;
+  background: var(--amber-soft);
+  padding: 10px;
+}
+
+.approval-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.approval-title {
+  font-size: 13px;
+  font-weight: 720;
+  overflow-wrap: anywhere;
+}
+
+.approval-subtitle,
+.approval-meta {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.approval-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.approval-preview {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.approval-preview summary {
+  cursor: pointer;
+  color: var(--amber);
+  font-weight: 650;
+}
+
+.approval-preview pre {
+  max-height: 160px;
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .message-list {
@@ -951,7 +1032,5 @@ body.progress-resizing {
   margin-right: 6px;
   vertical-align: middle;
 }
-
-
 
 

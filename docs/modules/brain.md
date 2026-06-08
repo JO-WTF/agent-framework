@@ -61,7 +61,7 @@ llm_with_tools = llm_client.bind_tools(AGENT_TOOLS)
 `AGENT_TOOLS` 来自 `app/tools/registry.py`：
 
 ```python
-AGENT_TOOLS = [search_web, run_python, run_command]
+AGENT_TOOLS = [search_web, start_sandbox, sandbox_status, stop_sandbox, add_shared_mount, apply_sandbox_file, list_tool_results, read_tool_result, run_python, run_command]
 ```
 
 设计初衷是让 Brain 通过标准 tool calling 协议提出工具请求，而不是自己拼接命令结果。这样：
@@ -71,6 +71,8 @@ AGENT_TOOLS = [search_web, run_python, run_command]
 - 父图可以根据 `AIMessage.tool_calls` 精确路由到 Tools Node。
 
 例子：用户问“读取项目文件并总结模块”。Brain 不应该直接假设文件内容，而应该生成 `run_command({"command": "rg --files"})` 或类似工具调用。工具返回后，再由 Orchestrator 更新 todo，Brain 继续读关键文件。
+
+如果工具返回“已保存为引用 tool-xxxx”，Brain 应调用 `read_tool_result(ref_id="tool-xxxx")` 读取归档内容，必要时分页，而不是为了绕过截断重复执行缩小输出的命令。
 
 ## 5. 与 Orchestrator 的协作
 

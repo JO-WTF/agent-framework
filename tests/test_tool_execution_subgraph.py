@@ -11,28 +11,33 @@ from langchain_core.messages import AIMessage, ToolMessage
 from app.nodes.tool_execution_subgraph import classify_tool_result, tool_execution_subgraph, validate_fixed_args
 from app.nodes.tools_node import tools_execution_node
 from app.tools.context import get_session_id
+from app.tools.sandbox import SandboxResult
 
 
 class ToolExecutionSubgraphTests(unittest.IsolatedAsyncioTestCase):
     async def test_subgraph_executes_tool_and_keeps_internal_messages_private(self):
-        result = await tool_execution_subgraph.ainvoke(
-            {
-                "original_request": {
-                    "id": "call-1",
-                    "name": "run_command",
+        with patch(
+            "app.tools.command_runner.run_sandboxed_command",
+            return_value=SandboxResult(stdout="hello", stderr="", returncode=0, metadata={"runtime": "docker"}),
+        ):
+            result = await tool_execution_subgraph.ainvoke(
+                {
+                    "original_request": {
+                        "id": "call-1",
+                        "name": "run_command",
+                        "args": {"command": "printf hello"},
+                    },
+                    "tool_call_id": "call-1",
+                    "tool_name": "run_command",
                     "args": {"command": "printf hello"},
-                },
-                "tool_call_id": "call-1",
-                "tool_name": "run_command",
-                "args": {"command": "printf hello"},
-                "session_id": "unit-test",
-                "retry_count": 0,
-                "max_retries": 0,
-                "internal_messages": [],
-                "status": "pending",
-                "final_result": "",
-            }
-        )
+                    "session_id": "unit-test",
+                    "retry_count": 0,
+                    "max_retries": 0,
+                    "internal_messages": [],
+                    "status": "pending",
+                    "final_result": "",
+                }
+            )
 
         self.assertEqual(result["status"], "success")
         self.assertIn("hello", result["final_result"])
@@ -55,15 +60,20 @@ class ToolExecutionSubgraphTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-        result = await tools_execution_node(
-            {
-                "messages": [message],
-                "revision_count": 0,
-                "eval_status": "",
-                "session_id": "unit-test",
-            },
-            {},
-        )
+        side_effects = [
+            SandboxResult(stdout="one", stderr="", returncode=0, metadata={"runtime": "docker"}),
+            SandboxResult(stdout="two", stderr="", returncode=0, metadata={"runtime": "docker"}),
+        ]
+        with patch("app.tools.command_runner.run_sandboxed_command", side_effect=side_effects):
+            result = await tools_execution_node(
+                {
+                    "messages": [message],
+                    "revision_count": 0,
+                    "eval_status": "",
+                    "session_id": "unit-test",
+                },
+                {},
+            )
 
         self.assertEqual(len(result["messages"]), 2)
         self.assertTrue(all(isinstance(item, ToolMessage) for item in result["messages"]))

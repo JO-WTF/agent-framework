@@ -134,12 +134,42 @@ Brain 和 Evaluator 都依赖这个结构。不要把 todo 变成自由文本。
   "task_complexity": "complex",
   "context_tags": ["command"],
   "todo_list": [],
+  "runtime_environment": {
+    "host_os": "darwin",
+    "cwd": "/path/to/repo",
+    "sandbox_mode": "docker",
+    "sandbox_container_paths": {
+      "work": "/workspace/work",
+      "shared_prefix": "/workspace/shared/<name>"
+    },
+    "path_protocols": ["repo://", "shared://"],
+    "write_policy": "Write generated files to /workspace/work, then request approval with apply_sandbox_file before changing repo:// or shared:// targets."
+  },
   "updated_at": "...",
   "tool_results": [
     {
       "tool_call_id": "call-1",
       "summary": "标准输出: hello",
       "updated_at": "..."
+    }
+  ],
+  "sandbox": {
+    "mode": "docker",
+    "status": "running",
+    "container": "agent-sandbox-...",
+    "image": "python:3.12-slim",
+    "work_dir": "/path/to/.data/sessions/.../sandbox_work/shared"
+  },
+  "pending_approvals": [
+    {
+      "id": "approval-...",
+      "type": "sandbox_file_writeback",
+      "status": "pending",
+      "source_path": "result.txt",
+      "target_path": "app/foo.py",
+      "target_uri": "repo://app/foo.py",
+      "overwrite": false,
+      "preview": "..."
     }
   ],
   "last_final_reply": "..."
@@ -149,7 +179,10 @@ Brain 和 Evaluator 都依赖这个结构。不要把 todo 变成自由文本。
 约定：
 
 - 不存完整长输出，完整内容去 `tool_results.json`。
+- `runtime_environment` 只包含对工具和沙箱决策有用的紧凑运行态，不包含环境变量、密钥或本地目录枚举。命令/Python 默认进入 Docker 会话沙箱；读取 repo 外系统目录必须先创建前端审批申请。
 - `tool_results` 按 `tool_call_id` 合并。
+- `sandbox` 只存会话运行态，不写入长期 memory；当已有容器 metadata 时会通过 `docker inspect` 更新 `running`、`stopped` 或 `missing` 状态。
+- `pending_approvals` 只保存等待用户处理的会话审批，不写入长期 memory。
 - `last_final_reply` 只保存摘要。
 
 ## 9. Entry 初始状态协议

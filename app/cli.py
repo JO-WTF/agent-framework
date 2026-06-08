@@ -50,7 +50,10 @@ def build_agent_graph():
 async def main():
     agent_app = build_agent_graph()
     config = {
-        "configurable": {"thread_id": str(uuid.uuid4())},
+        "configurable": {
+            "thread_id": str(uuid.uuid4()),
+            "session_id": "cli",
+        },
         "callbacks": [StreamingConsoleCallback()]
     }
 

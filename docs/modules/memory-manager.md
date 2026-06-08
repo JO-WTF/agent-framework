@@ -29,8 +29,11 @@ world_state = {
     "task_complexity": ...,
     "context_tags": ...,
     "todo_list": ...,
+    "runtime_environment": ...,
     "updated_at": ...,
     "tool_results": ...,
+    "sandbox": ...,
+    "pending_approvals": ...,
     "last_final_reply": ...,
 }
 ```
@@ -40,7 +43,10 @@ world_state = {
 - `task_complexity`：当前任务复杂度。
 - `context_tags`：当前动态上下文标签。
 - `todo_list`：Orchestrator 维护的分级 todo。
+- `runtime_environment`：当前宿主系统、项目根目录、沙箱模式、容器路径、路径协议和写入策略。
 - `tool_results`：最近工具结果摘要，按 `tool_call_id` 合并去重，最多保留 30 条。
+- `sandbox`：当前会话 Docker 沙箱运行态。未启动时为 `{"mode": "docker", "status": "not_started"}`；启动后包含容器名、镜像、只读源码目录和共享工作目录，并通过 `docker inspect` 做轻量健康检查。
+- `pending_approvals`：当前会话等待用户处理的审批申请，例如沙箱文件写回。
 - `last_final_reply`：最近自然语言最终答复摘要。
 - `updated_at`：固化时间。
 

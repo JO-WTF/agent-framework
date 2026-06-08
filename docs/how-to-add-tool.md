@@ -107,7 +107,7 @@ store_tool_result_for_current_session(tool_name, raw_output, metadata)
 推荐返回策略：
 
 - 短输出：直接返回。
-- 长输出：返回 `ref_id + 摘要`，完整内容存档。
+- 长输出：返回 `ref_id + 摘要`，完整内容存档，并提示 Agent 可用 `read_tool_result(ref_id="tool-xxxx")` 读取完整内容。
 - 错误输出：也要存档，并在 metadata 中标记 `status: error`。
 
 ## 5. 错误返回约定

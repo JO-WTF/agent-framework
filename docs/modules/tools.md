@@ -21,13 +21,20 @@
 | 工具 | 文件 | 用途 |
 | --- | --- | --- |
 | `search_web(query)` | `app/tools/search.py` | 通过 Tavily 获取联网检索结果，最多 3 条摘要。 |
-| `run_python(code)` | `app/tools/python_runner.py` | 在当前 Python 进程中执行代码，适合计算和数据处理。 |
-| `run_command(command)` | `app/tools/command_runner.py` | 通过 shell 执行系统命令，返回 stdout/stderr。 |
+| `list_tool_results(limit=10)` | `app/tools/tool_results.py` | 查看当前会话已归档工具结果引用。 |
+| `read_tool_result(ref_id, offset=0, limit=8000)` | `app/tools/tool_results.py` | 按引用读取完整工具结果，支持分页。 |
+| `start_sandbox()` | `app/tools/sandbox_tools.py` | 显式启动当前会话共享 Docker 容器。 |
+| `sandbox_status()` | `app/tools/sandbox_tools.py` | 查看当前会话沙箱状态，不启动容器。 |
+| `stop_sandbox()` | `app/tools/sandbox_tools.py` | 停止当前会话共享 Docker 容器。 |
+| `add_shared_mount(name, host_path, access="read")` | `app/tools/sandbox_tools.py` | 为访问本地系统目录创建前端审批申请，支持 read (只读) 与 write (读写)；Windows 原生路径也走同一机制。 |
+| `apply_sandbox_file(source_path, target_path, overwrite=False)` | `app/tools/sandbox_tools.py` | 为 `/workspace/work` 内的单个文件创建写回审批申请，目标支持 `repo://...` 和 `shared://<name>/...`。 |
+| `run_python(code)` | `app/tools/python_runner.py` | 在当前会话 Docker 沙箱中执行 Python 代码。 |
+| `run_command(command)` | `app/tools/command_runner.py` | 在当前会话 Docker 沙箱中执行 shell 命令。 |
 
 `AGENT_TOOLS` 是唯一注册表：
 
 ```python
-AGENT_TOOLS = [search_web, run_python, run_command]
+AGENT_TOOLS = [search_web, start_sandbox, sandbox_status, stop_sandbox, add_shared_mount, apply_sandbox_file, list_tool_results, read_tool_result, run_python, run_command]
 ```
 
 新增工具时至少要改三处：
@@ -162,15 +169,60 @@ ModuleNotFoundError: No module named 'pandas'
 
 如果输出超过 1024 字符，工具返回引用和摘要，完整内容存档。这样避免长输出反复污染模型上下文。
 
+当工具返回类似：
+
+```text
+命令输出过长，已保存为引用 tool-0001。
+```
+
+Agent 应优先调用：
+
+```text
+read_tool_result(ref_id="tool-0001")
+```
+
+如果归档内容仍很长，使用 `offset` 和 `limit` 分页读取，而不是重新执行 `head`、`tail` 或缩小版命令。`list_tool_results()` 可用于查看当前会话已有引用。
+
 ## 9. 安全注意事项
 
-当前 `run_command` 使用：
+早期版本的 `run_command` 曾直接在 host 上使用：
 
 ```python
 subprocess.run(command, shell=True, timeout=30)
 ```
 
-这不是系统级沙箱。项目只在自动修复阶段做危险命令拦截，并不阻止 Brain 首次请求一个有副作用的命令。生产环境应增加：
+这不是系统级沙箱。当前 Agent 命令和 Python 执行默认进入 Docker 会话沙箱；若禁用 Docker 沙箱，会拒绝 host 执行。第一阶段 Docker 会话沙箱路径：
+
+```text
+.data/sessions/{session_id}/sandbox_work/shared -> /workspace/work:rw
+```
+
+Docker 沙箱按 `session_id` 懒启动一个常驻容器。同一会话内的 `run_command` and `run_python` 都通过 `docker exec` 进入同一个容器，所有节点都可以通过 `.data/sessions/{session_id}/sandbox.json` 和共享工作目录看到容器 environment 与产物。
+
+沙箱状态进入 `world_state["sandbox"]`，并会在已有 metadata 时通过 `docker inspect` 做真实健康检查。Agent 也可以显式调用 `sandbox_status()` 查看状态。
+
+共享目录在容器内默认只读。如果显式指定 `access="write"`，则可以申请读写权限（挂载为 `rw`）。若需要把沙箱产物写回，可操作已获得读写授权的挂载，或者在 `/workspace/work` 中生成文件再调用 `apply_sandbox_file()` 创建审批申请。目标支持 `repo://path/to/file` 和 `shared://<name>/path/to/file`；不带 scheme 时按 `repo://` 处理。该工具只支持单文件申请，拒绝路径穿越、`.git`、`.data` 和 `.env` 目标，默认不允许覆盖已有文件。`shared://` 目标必须先通过 `add_shared_mount()` 创建审批申请，并由用户批准后写入当前 session 的 `shared_mounts.json` 授权表。
+
+当任一工具创建 pending approval 后，Web run 会进入 `awaiting_approval`，停止继续编排；用户在前端批准或拒绝后，后端会追加审批结果消息并继续运行。
+
+Windows 原生目录不需要新协议。用户授权后仍然映射到 `/workspace/shared/<name>`：
+
+```text
+C:\Users\alice\Documents\docs -> /workspace/shared/docs:ro (或 :rw)
+```
+
+Agent 读取 `/workspace/shared/docs`，修改版写到 `/workspace/work`，再申请 `shared://docs/...` 写回。敏感目录会被拒绝，包括 `AppData`、`Windows`、`Program Files`、`ProgramData`、`.ssh`、`.aws`、`.azure`、`.kube`。
+
+真正的写回只由 Web 审批 API 执行：
+
+```text
+POST /api/approvals/approve
+POST /api/approvals/reject
+```
+
+待审批记录保存在 `.data/sessions/{session_id}/approvals.json`，并进入 `world_state["pending_approvals"]` 供前端和 Agent 观察。
+
+Docker 沙箱默认开启网络，使用非 root 用户、只读根文件系统、`/tmp` tmpfs、CPU/内存/pids/超时限制。生产环境还应增加：
 
 - 命令白名单或审批层。
 - 工作目录限制。

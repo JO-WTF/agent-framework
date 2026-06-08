@@ -1,4 +1,5 @@
 import asyncio
+import platform
 from datetime import datetime
 from typing import Any
 
@@ -6,6 +7,9 @@ from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
 
 from app.config import AgentState
 from app.memory.store import archive_messages, context_size_bytes, make_json_safe_for_storage, summarize_text
+from app.runtime_paths import ROOT_DIR
+from app.tools.approvals import list_pending_approvals
+from app.tools.sandbox import sandbox_mode, get_sandbox_world_state
 
 MEMORY_MANAGER_KEEP_RECENT = 8
 MEMORY_MANAGER_MIN_MESSAGES = 12
@@ -34,6 +38,21 @@ def _merge_tool_results(existing: list[dict[str, Any]], messages: list[Any]) -> 
     return list(by_id.values())[-MAX_WORLD_STATE_TOOL_RESULTS:]
 
 
+def build_runtime_environment() -> dict[str, Any]:
+    return {
+        "host_os": platform.system().lower() or "unknown",
+        "cwd": str(ROOT_DIR),
+        "sandbox_mode": sandbox_mode(),
+        "sandbox_container_paths": {
+            "work": "/workspace/work",
+            "shared_prefix": "/workspace/shared/<name>",
+        },
+        "path_protocols": ["repo://", "shared://"],
+        "write_policy": "Write generated files to /workspace/work, then request approval with apply_sandbox_file before changing repo:// or shared:// targets.",
+        "shared_mount_policy": "Use add_shared_mount only after the user explicitly authorizes a local directory; shared mounts are read-only in the container.",
+    }
+
+
 def build_world_state(state: AgentState) -> dict[str, Any]:
     """Build a compact world-state board from confirmed structured graph state."""
     previous = dict(state.get("world_state", {}) or {})
@@ -44,9 +63,18 @@ def build_world_state(state: AgentState) -> dict[str, Any]:
         "task_complexity": state.get("task_complexity", previous.get("task_complexity", "unknown")),
         "context_tags": state.get("context_tags", previous.get("context_tags", ["general"])),
         "todo_list": state.get("todo_list", previous.get("todo_list", [])),
+        "runtime_environment": build_runtime_environment(),
         "updated_at": datetime.now().isoformat(),
     }
     world_state["tool_results"] = _merge_tool_results(previous.get("tool_results", []), messages)
+    sandbox = get_sandbox_world_state(state.get("session_id"))
+    if sandbox is not None:
+        world_state["sandbox"] = sandbox
+    pending_approvals = list_pending_approvals(state.get("session_id"))
+    if pending_approvals:
+        world_state["pending_approvals"] = pending_approvals
+    else:
+        world_state.pop("pending_approvals", None)
 
     final_replies = [
         str(getattr(message, "content", ""))

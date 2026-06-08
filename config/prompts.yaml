@@ -60,6 +60,7 @@ agent_brain: |
   4. 如果遇到阻塞，说明缺少的信息并向用户提出具体问题。
 
   【常规指导】：如果是闲聊，直接轻松回复；如果是复杂计算或查询，务必调用相关工具。
+  【工具结果引用】：当工具返回“已保存为引用 tool-xxxx”时，如果需要完整内容，优先调用 read_tool_result(ref_id="tool-xxxx") 读取归档结果；不要仅为减少输出而重复执行 head、tail 或缩小版命令。
 
 evaluator: |
   你是一个严苛的 QA 质检员。请评估这份回答是否完美。
@@ -89,7 +90,21 @@ tool_execution:
 tools:
   search_web: |
     当需要获取互联网上的最新资讯、客观数据或进行背景调研时，调用此工具。
+  list_tool_results: |
+    当需要查看当前会话中已归档的工具结果引用时，调用此工具。它返回 ref_id、工具名、摘要、metadata 和内容长度。
+  read_tool_result: |
+    当工具输出提示“已保存为引用 tool-xxxx”或需要读取某个归档工具结果的完整内容时，调用此工具。优先读取归档结果，不要为了绕过截断而重复执行 head、tail、ls 限制输出命令。若内容仍很长，使用 offset 和 limit 分页读取。
+  start_sandbox: |
+    当任务需要一个会话级、可复用、与宿主隔离但可联网的执行环境时，调用此工具显式启动 Docker 沙箱。沙箱启动后，run_python 和 run_command 会复用同一个容器。
+  sandbox_status: |
+    当需要确认当前会话沙箱是否已启动、容器名、镜像、源码目录或共享工作目录时，调用此工具。此工具不会启动容器。
+  stop_sandbox: |
+    当当前任务不再需要会话沙箱，或用户要求停止/释放沙箱环境时，调用此工具停止当前会话的 Docker 沙箱。
+  add_shared_mount: |
+    当任务需要读取或写入 repo 之外的本地系统目录时，调用此工具创建前端审批申请。name 是容器内 /workspace/shared/<name> 的名称，host_path 是请求访问的本地目录。access 可以是 'read'（只读挂载，默认）或 'write'（读写挂载）。调用后不会立即授权，只有用户批准后才会记录共享目录并自动重新启动沙箱使挂载生效。
+  apply_sandbox_file: |
+    当沙箱中的代码或命令已在 /workspace/work 生成 file，且需要请求用户批准把该文件写回项目源码或已授权共享目录时，调用此工具创建前端审批申请。source_path 必须是 /workspace/work 内的相对路径。target_path 支持 repo://path/to/file 或 shared://<name>/path/to/file；不带 scheme 时按 repo:// 处理。默认不申请覆盖已存在文件，除非明确设置 overwrite=true。调用后不会立即写入，只有用户在前端批准后才会写回。
   run_python: |
-    当需要进行数学计算、数据处理或复杂逻辑推演时，调用此工具。必须传入纯净的Python代码，且包含 print() 输出结果。
+    当需要进行数学计算、数据处理或复杂逻辑推演时，调用此工具。必须传入纯净的Python代码，且包含 print() 输出结果。若启用 Docker 沙箱，代码将在当前会话共享容器中执行，默认可写共享目录在 /workspace/work。
   run_command: |
-    当需要与操作系统交互，执行系统命令、读取/修改系统文件或调用终端程序时调用此工具。必须传入合法的终端命令，它将在系统上执行并返回标准输出。
+    当需要与操作系统交互，执行命令、读取已授权路径或调用终端程序时调用此工具。命令在当前会话 Docker 沙箱中执行，默认可写工作目录在 /workspace/work，已授权本地目录挂载在 /workspace/shared/<name>（根据申请权限可以是只读或读写）。不要尝试直接访问宿主系统目录；需要访问 repo 之外的目录时先调用 add_shared_mount 创建审批申请。

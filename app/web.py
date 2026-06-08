@@ -15,10 +15,16 @@ from pydantic import BaseModel
 from app.cli import build_agent_graph
 from app.memory.store import append_session_event, trim_messages
 from app.runtime_paths import STATIC_DIR
+from app.tools.approvals import approve_pending_approval, list_approvals, list_pending_approvals, reject_approval
+from app.tools.sandbox import SandboxError
 
 
 class ChatRequest(BaseModel):
     message: str
+
+
+class ApprovalDecisionRequest(BaseModel):
+    approval_id: str
 
 
 def parse_thinking_content(content: str) -> tuple[str, str]:
@@ -167,6 +173,18 @@ class ConsoleSession:
             "events": [],
             "messages": [],
         })
+
+    async def refresh_approvals(self) -> None:
+        pending = list_pending_approvals(self.session_id)
+        world_state = dict(self.state.get("world_state") or {})
+        if pending:
+            world_state["pending_approvals"] = pending
+        else:
+            world_state.pop("pending_approvals", None)
+        self.state["world_state"] = world_state
+
+    def has_pending_approvals(self) -> bool:
+        return bool((self.state.get("world_state") or {}).get("pending_approvals"))
 
 
 class SessionManager:
@@ -350,14 +368,17 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
         "revision_count": 0,
         "eval_status": "",
         "session_id": session_id or "cli",
-        "task_complexity": "unknown",
-        "todo_list": [],
-        "context_tags": ["general"],
-        "world_state": {},
-        "orchestrator_next": "agent",
+        "task_complexity": session.state.get("task_complexity", "unknown"),
+        "todo_list": session.state.get("todo_list", []),
+        "context_tags": session.state.get("context_tags", ["general"]),
+        "world_state": session.state.get("world_state", {}),
+        "orchestrator_next": session.state.get("orchestrator_next", "agent"),
     }
     config = {
-        "configurable": {"thread_id": session.thread_id},
+        "configurable": {
+            "thread_id": session.thread_id,
+            "session_id": session_id,
+        },
         "callbacks": [WebConsoleCallback(session)],
     }
 
@@ -430,6 +451,15 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
 
                 if node_name == "memory":
                     session.state["world_state"] = node_update.get("world_state", session.state.get("world_state", {}))
+                    if session.has_pending_approvals():
+                        session.state["status"] = "awaiting_approval"
+                        session.state["current_node"] = ""
+                        await session.publish({
+                            "type": "approval_required",
+                            "title": "等待用户审批",
+                            "details": {"pending_approvals": session.state["world_state"].get("pending_approvals", [])},
+                        })
+                        return
 
                 for message in node_update.get("messages", []):
                     if isinstance(message, AIMessage) and not getattr(message, "tool_calls", None):
@@ -504,6 +534,28 @@ async def chat(request: Request, payload: ChatRequest):
     return {"status": "started", "session_id": session_id, "state": session.snapshot()}
 
 
+async def resume_after_approval(session_id: str, session: ConsoleSession, approval: dict[str, Any]) -> None:
+    if session.running_task and not session.running_task.done():
+        return
+    status = approval.get("status", "")
+    target = approval.get("target_uri") or approval.get("host_path") or approval.get("target_path", "")
+    message = HumanMessage(content=f"用户已处理审批 {approval.get('id')}: {status} {target}。请基于当前 world_state 继续任务。")
+    session.memory_messages.append(message)
+    session.state.update({
+        "status": "running",
+        "current_node": "orchestrator",
+        "model_output": "",
+        "tool_runs": [],
+        "messages": [serialize_message(m) for m in session.memory_messages],
+    })
+    await session.publish({
+        "type": "run_start",
+        "title": "审批后继续任务",
+        "details": {"approval": approval, "thread_id": session.thread_id},
+    })
+    session.running_task = asyncio.create_task(run_agent(message, session, session_id))
+
+
 @app.post("/api/stop")
 async def stop(request: Request):
     _, session = resolve_session(request)
@@ -511,6 +563,46 @@ async def stop(request: Request):
         session.running_task.cancel()
         return {"status": "stopping"}
     return {"status": "idle"}
+
+
+@app.get("/api/approvals")
+async def get_approvals(request: Request):
+    session_id, _ = resolve_session(request)
+    return {"session_id": session_id, "approvals": list_approvals(session_id)}
+
+
+@app.post("/api/approvals/approve")
+async def approve_approval(request: Request, payload: ApprovalDecisionRequest):
+    session_id, session = resolve_session(request)
+    try:
+        approval = approve_pending_approval(session_id, payload.approval_id)
+    except SandboxError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await session.refresh_approvals()
+    await session.publish({
+        "type": "approval_applied",
+        "title": f"审批已批准: {approval.get('target_uri') or approval.get('host_path') or approval.get('target_path', '')}",
+        "details": {"approval": approval},
+    })
+    await resume_after_approval(session_id, session, approval)
+    return {"status": "applied", "approval": approval, "state": session.snapshot()}
+
+
+@app.post("/api/approvals/reject")
+async def reject_approval_endpoint(request: Request, payload: ApprovalDecisionRequest):
+    session_id, session = resolve_session(request)
+    try:
+        approval = reject_approval(session_id, payload.approval_id)
+    except SandboxError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await session.refresh_approvals()
+    await session.publish({
+        "type": "approval_rejected",
+        "title": f"审批已拒绝: {approval.get('target_uri') or approval.get('host_path') or approval.get('target_path', '')}",
+        "details": {"approval": approval},
+    })
+    await resume_after_approval(session_id, session, approval)
+    return {"status": "rejected", "approval": approval, "state": session.snapshot()}
 
 
 @app.post("/api/clear")
@@ -561,8 +653,4 @@ async def shutdown_event():
         await asyncio.gather(*tasks, return_exceptions=True)
 
 # reload test comment v4
-
-
-
-
 

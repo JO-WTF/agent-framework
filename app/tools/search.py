@@ -1,14 +1,17 @@
 import asyncio
 
 from langchain_core.tools import tool
+from langchain_core.runnables.config import RunnableConfig
 
 from app.config import PROMPTS, search_client
 from app.logging_config import logger
+from app.tools.context import get_session_id_from_config_or_context
 from app.tools.storage import store_tool_result_for_current_session
 
 
 @tool(description=PROMPTS["tools"]["search_web"])
-async def search_web(query: str) -> str:
+async def search_web(query: str, config: RunnableConfig = None) -> str:
+    get_session_id_from_config_or_context(config)
     logger.info(f"🌐 \033[94m[触发工具: 联网检索] -> {query}\033[0m")
     try:
         loop = asyncio.get_event_loop()

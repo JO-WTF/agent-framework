@@ -3,6 +3,7 @@ const els = {
   statusBadge: document.getElementById("statusBadge"),
   nodeBadge: document.getElementById("nodeBadge"),
   stopBtn: document.getElementById("stopBtn"),
+  newSessionBtn: document.getElementById("newSessionBtn"),
   clearBtn: document.getElementById("clearBtn"),
   chatForm: document.getElementById("chatForm"),
   messageInput: document.getElementById("messageInput"),
@@ -11,6 +12,7 @@ const els = {
   modelOutput: document.getElementById("modelOutput"),
   eventList: document.getElementById("eventList"),
   todoList: document.getElementById("todoList"),
+  approvalList: document.getElementById("approvalList"),
   routeList: document.getElementById("routeList"),
   progressSplit: document.getElementById("progressSplit"),
   progressResizeHandle: document.getElementById("progressResizeHandle"),
@@ -209,6 +211,7 @@ function statusLabel(status) {
   const labels = {
     idle: "空闲",
     running: "运行中",
+    awaiting_approval: "等待审批",
     cancelled: "已停止",
     error: "错误",
     pending: "待处理",
@@ -703,6 +706,56 @@ function renderTodos(items) {
     .join("");
 }
 
+function renderApprovals(approvals) {
+  if (!els.approvalList) return;
+  if (!approvals || !approvals.length) {
+    els.approvalList.className = "approval-list empty";
+    els.approvalList.textContent = "暂无审批";
+    return;
+  }
+
+  els.approvalList.className = "approval-list";
+  els.approvalList.innerHTML = approvals
+    .map((approval) => renderApprovalCard(approval))
+    .join("");
+}
+
+function renderApprovalCard(approval) {
+  const isFilesystemAccess = approval.type === "filesystem_access";
+  const title = isFilesystemAccess
+    ? `${approval.access === "write" ? "读写" : "读取"}本地目录: ${approval.host_path || "-"}`
+    : (approval.target_uri || approval.target_path || "-");
+  const subtitle = isFilesystemAccess
+    ? `${approval.host_path || "-"} → ${approval.container_path || `/workspace/shared/${approval.name || ""}`}`
+    : `${approval.source_path || "-"} → ${approval.target_uri || approval.target_path || "-"}`;
+  const meta = isFilesystemAccess
+    ? [`权限: ${approval.access || "read"}`, `名称: ${approval.name || "-"}`, approval.access === "write" ? "读写挂载" : "只读挂载"]
+    : [approval.overwrite ? "覆盖写入" : "不覆盖", approval.target_exists ? "目标已存在" : "新文件", `${approval.source_size || "0"} bytes`];
+  const approveText = isFilesystemAccess ? (approval.access === "write" ? "同意读写" : "同意读取") : "同意写回";
+  return `
+    <div class="approval-card" data-approval-id="${escapeHtml(approval.id)}">
+      <div class="approval-card-header">
+        <div>
+          <div class="approval-title">${escapeHtml(title)}</div>
+          <div class="approval-subtitle">${escapeHtml(subtitle)}</div>
+        </div>
+        <span class="badge pending">${statusLabel(approval.status || "pending")}</span>
+      </div>
+      <div class="approval-meta">
+        ${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+      </div>
+      <details class="approval-preview">
+        <summary>预览</summary>
+        <pre>${escapeHtml(approval.preview || approval.summary || "")}</pre>
+      </details>
+      <div class="approval-actions">
+        <button class="button primary approval-approve" type="button" data-approval-id="${escapeHtml(approval.id)}">${approveText}</button>
+        <button class="button danger approval-reject" type="button" data-approval-id="${escapeHtml(approval.id)}">拒绝</button>
+      </div>
+    </div>
+  `;
+}
+
 function routeLabel(route) {
   const labels = {
     START: "START",
@@ -919,12 +972,13 @@ function renderState(state) {
   els.currentNodeValue.textContent = node;
   els.complexityValue.textContent = state.task_complexity || "unknown";
   els.stopBtn.disabled = status !== "running";
-  els.sendBtn.disabled = status === "running";
-  els.messageInput.disabled = status === "running";
+  els.sendBtn.disabled = status === "running" || status === "awaiting_approval";
+  els.messageInput.disabled = status === "running" || status === "awaiting_approval";
   els.modelOutput.textContent = state.model_output || "等待模型输出...";
 
   renderMessages(state.messages || []);
   renderEvents(state.events || []);
+  renderApprovals(state.world_state?.pending_approvals || []);
   renderTodos(state.todo_list || []);
   renderRoutes(state);
 }
@@ -945,6 +999,24 @@ async function loadState() {
     localStorage.setItem(SESSION_STORAGE_KEY, state.session_id);
   }
   renderState(state);
+}
+
+async function decideApproval(approvalId, action) {
+  const response = await fetch(`/api/approvals/${action}?session_id=${encodeURIComponent(sessionId)}`, {
+    method: "POST",
+    headers: sessionHeaders(),
+    body: JSON.stringify({ approval_id: approvalId }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    alert(payload.detail || "审批操作失败");
+    return;
+  }
+  if (payload.state) {
+    renderState(payload.state);
+  } else {
+    await loadState();
+  }
 }
 
 function connectWs() {
@@ -1042,12 +1114,30 @@ els.stopBtn.addEventListener("click", async () => {
   });
 });
 
+if (els.approvalList) {
+  els.approvalList.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-approval-id]");
+    if (!button) return;
+    const approvalId = button.dataset.approvalId;
+    const action = button.classList.contains("approval-approve") ? "approve" : "reject";
+    button.disabled = true;
+    await decideApproval(approvalId, action);
+  });
+}
+
 els.clearBtn.addEventListener("click", async () => {
   await fetch(`/api/clear?session_id=${encodeURIComponent(sessionId)}`, {
     method: "POST",
     headers: sessionHeaders(),
   });
   await loadState();
+});
+
+els.newSessionBtn.addEventListener("click", () => {
+  if (confirm("确定要新建会话吗？当前会话的所有未保存进度将会丢失。")) {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    location.reload();
+  }
 });
 
 els.eventList.addEventListener("click", (event) => {

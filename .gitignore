@@ -5,3 +5,4 @@ __pycache__/
 conversation_archive.json
 tool_results.json
 uvicorn.log
+logs/
