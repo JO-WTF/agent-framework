@@ -20,6 +20,23 @@ MAX_SUMMARY_CHARS = 1024
 MAX_NOTE_SUMMARY_CHARS = 200
 DEFAULT_MAX_CONTEXT_SIZE_KB = 512
 MAX_CONTEXT_SIZE_KB_ENV = "MAX_CONTEXT_SIZE_KB"
+DEFAULT_CONTEXT_TAG = "general"
+MAX_STATIC_GUIDELINE_SECTIONS = 8
+MAX_STATIC_GUIDELINE_CHARS = 6000
+KNOWN_CONTEXT_TAGS = (
+    "general",
+    "database",
+    "file_system",
+    "api_call",
+    "search",
+    "python",
+    "command",
+    "tool_error",
+    "memory",
+    "security",
+    "web",
+)
+
 
 
 def _ensure_dirs() -> None:
@@ -40,23 +57,132 @@ def _write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def load_static_guidelines() -> str:
+def normalize_context_tags(tags: list[str] | tuple[str, ...] | set[str] | str | None) -> list[str]:
+    if not tags:
+        return [DEFAULT_CONTEXT_TAG]
+    if isinstance(tags, str):
+        raw_tags = re.split(r"[,\s]+", tags)
+    else:
+        raw_tags = [str(tag) for tag in tags]
+
+    normalized: list[str] = []
+    for tag in raw_tags:
+        cleaned = tag.strip().strip("[]").lower().replace("-", "_")
+        if not cleaned or cleaned in normalized:
+            continue
+        normalized.append(cleaned)
+    return normalized or [DEFAULT_CONTEXT_TAG]
+
+
+def infer_context_tags(text: str = "", source: str = "") -> list[str]:
+    haystack = f"{source}\n{text}".lower()
+    tags: list[str] = []
+    keyword_map = {
+        "database": ("database", "sql", "db", "postgres", "mysql", "sqlite", "数据库"),
+        "file_system": ("file", "path", "directory", "filesystem", "文件", "目录", "路径"),
+        "api_call": ("api", "http", "request", "endpoint", "接口"),
+        "search": ("search", "tavily", "联网", "搜索", "检索"),
+        "python": ("python", "traceback", "run_python", "代码报错"),
+        "command": ("command", "shell", "terminal", "run_command", "命令"),
+        "tool_error": ("tool_error", "失败", "error", "exception", "timeout", "报错"),
+        "security": ("security", "安全", "permission", "权限", "危险"),
+        "web": ("web", "fastapi", "browser", "ui", "网页"),
+    }
+    for tag, keywords in keyword_map.items():
+        if any(keyword in haystack for keyword in keywords):
+            tags.append(tag)
+    return normalize_context_tags(tags)
+
+
+def _extract_inline_tags(text: str) -> list[str]:
+    tags: list[str] = []
+    for match in re.finditer(r"\[([a-zA-Z0-9_,\-\s]+)\]", text):
+        tags.extend(normalize_context_tags(match.group(1)))
+    return [tag for tag in normalize_context_tags(tags) if tag != DEFAULT_CONTEXT_TAG] if tags else []
+
+
+def _split_tagged_guideline_sections(text: str) -> list[dict[str, Any]]:
+    sections: list[dict[str, Any]] = []
+    current_title = "全局规则"
+    current_tags: list[str] = [DEFAULT_CONTEXT_TAG]
+    current_lines: list[str] = []
+
+    def flush() -> None:
+        content = "\n".join(current_lines).strip()
+        if content:
+            sections.append({"title": current_title, "tags": current_tags, "content": content})
+
+    for line in text.splitlines():
+        heading_match = re.match(r"^(#{1,6})\s+(.*)$", line)
+        tag_line_match = re.match(r"^\s*\[([a-zA-Z0-9_,\-\s]+)\]\s*(.*)$", line)
+        if heading_match:
+            flush()
+            heading = heading_match.group(2).strip()
+            inline_tags = _extract_inline_tags(heading)
+            current_title = re.sub(r"\s*\[[^\]]+\]", "", heading).strip() or "规则"
+            current_tags = inline_tags or [DEFAULT_CONTEXT_TAG]
+            current_lines = [line]
+        elif tag_line_match and current_lines:
+            current_tags = normalize_context_tags(tag_line_match.group(1))
+            remainder = tag_line_match.group(2).strip()
+            if remainder:
+                current_lines.append(remainder)
+        else:
+            current_lines.append(line)
+    flush()
+    return sections
+
+
+def load_static_guidelines(context_tags: list[str] | str | None = None, max_sections: int = MAX_STATIC_GUIDELINE_SECTIONS) -> str:
     if not STATIC_GUIDELINES_FILE.exists():
         return ""
-    return STATIC_GUIDELINES_FILE.read_text(encoding="utf-8").strip()
+    selected_tags = set(normalize_context_tags(context_tags))
+    raw_text = STATIC_GUIDELINES_FILE.read_text(encoding="utf-8").strip()
+    if not raw_text:
+        return ""
+
+    sections = _split_tagged_guideline_sections(raw_text)
+    selected_sections = [
+        section
+        for section in sections
+        if selected_tags.intersection(section.get("tags", []))
+    ]
+    if not selected_sections and DEFAULT_CONTEXT_TAG in selected_tags:
+        selected_sections = sections[:1]
+
+    lines: list[str] = []
+    for section in selected_sections[:max_sections]:
+        tags_label = ", ".join(section.get("tags", []))
+        lines.append(f"### {section.get('title', '规则')} [{tags_label}]\n{section.get('content', '').strip()}")
+    result = "\n\n".join(lines).strip()
+    if len(result) > MAX_STATIC_GUIDELINE_CHARS:
+        result = result[:MAX_STATIC_GUIDELINE_CHARS] + "\n...（静态规则已按标签筛选并截断）"
+    return result
 
 
-def load_agent_notes(limit: int = 10) -> str:
-    """Load global agent notes (not session-specific)."""
+def load_agent_notes(context_tags: list[str] | str | None = None, limit: int = 5) -> str:
+    """Load only agent notes matching the requested context tags."""
     _ensure_dirs()
     notes = _read_json(GLOBAL_AGENT_MEMORY_FILE, [])
     if not notes:
         return ""
-    lines = ["【Agent Auto Memory 笔记】"]
-    for note in notes[:limit]:
+    selected_tags = set(normalize_context_tags(context_tags))
+    matching_notes = []
+    for note in notes:
+        note_tags = set(normalize_context_tags(note.get("tags") or infer_context_tags(note.get("note", ""), note.get("source", ""))))
+        if selected_tags.intersection(note_tags):
+            matching_notes.append((note, note_tags))
+        if len(matching_notes) >= limit:
+            break
+    if not matching_notes:
+        return ""
+
+    lines = ["【Agent Auto Memory 笔记（按需加载）】"]
+    for note, note_tags in matching_notes:
         source = note.get("source", "agent")
         summary = note.get("summary", "(无摘要)")
-        lines.append(f"- [{source}] {summary}")
+        tags_label = ",".join(sorted(note_tags))
+        lines.append(f"- [{source} | tags: {tags_label}] {summary}")
     return "\n".join(lines)
 
 
@@ -64,8 +190,7 @@ def save_agent_note(note: str, source: str = "agent", tags: list[str] | str | No
     """Save global agent note (not session-specific)."""
     _ensure_dirs()
     notes = _read_json(GLOBAL_AGENT_MEMORY_FILE, [])
-    if isinstance(tags, str):
-        tags = [tags]
+    normalized_tags = normalize_context_tags(tags or infer_context_tags(note, source))
     note_text = note.strip()
     summary = note_text.splitlines()[0][:MAX_NOTE_SUMMARY_CHARS]
     if any(existing.get("summary") == summary and existing.get("source") == source for existing in notes):
@@ -76,7 +201,7 @@ def save_agent_note(note: str, source: str = "agent", tags: list[str] | str | No
         "id": note_id,
         "created_at": datetime.now().isoformat(),
         "source": source,
-        "tags": tags or [],
+        "tags": normalized_tags,
         "summary": summary,
         "note": note_text,
     }

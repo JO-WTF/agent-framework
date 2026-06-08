@@ -352,6 +352,8 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
         "session_id": session_id or "cli",
         "task_complexity": "unknown",
         "todo_list": [],
+        "context_tags": ["general"],
+        "world_state": {},
         "orchestrator_next": "agent",
     }
     config = {
@@ -399,6 +401,7 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                     session.state["task_complexity"] = node_update.get("task_complexity", "unknown")
                     session.state["todo_list"] = next_todo
                     session.state["orchestrator_next"] = next_route
+                    session.state["context_tags"] = node_update.get("context_tags", session.state.get("context_tags", ["general"]))
 
                     todo_changed = normalized_json(previous_todo) != normalized_json(next_todo)
                     complexity_changed = previous_complexity != next_complexity
@@ -424,6 +427,9 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                                 "current_todo_list": make_json_safe(session.state["todo_list"]),
                             },
                         })
+
+                if node_name == "memory":
+                    session.state["world_state"] = node_update.get("world_state", session.state.get("world_state", {}))
 
                 for message in node_update.get("messages", []):
                     if isinstance(message, AIMessage) and not getattr(message, "tool_calls", None):
@@ -482,6 +488,8 @@ async def chat(request: Request, payload: ChatRequest):
         "current_node": "orchestrator",
         "task_complexity": "unknown",
         "todo_list": [],
+        "context_tags": ["general"],
+        "world_state": {},
         "model_output": "",
         "tool_runs": [],
         "events": [],

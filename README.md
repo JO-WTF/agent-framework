@@ -19,9 +19,9 @@
 运行时，用户在终端输入问题，系统把问题加入 `AgentState.messages`，再交给 LangGraph 状态图驱动。Orchestrator 会先判断任务复杂度；如果是复杂任务，会生成支持分级的 `todo_list`。Agent Brain 后续会带着 todo 上下文推理和行动。工具执行后先回到 Orchestrator 更新 todo 状态，再继续交给 Agent Brain。最终回答会进入 Evaluator 节点做质量检查，不通过则回到 Orchestrator 重新规划。
 
 为了控制长会话上下文，系统已实现：
-- `app/memory/store.py` 的 `trim_messages()` 会自动压缩早期对话并保留最近窗口。
-- 根目录 `CLAUDE.md` 支持静态规则注入，每次对话开启都会被加载为系统提示。
-- 自动记忆笔记会把工具失败或大输出的教训写入本地 `agent_memory.json`，并在后续对话中作为参考加载。
+- `app/memory/store.py` 的 `trim_messages()` 会自动压缩早期对话并保留最近窗口；`MemoryManager` 会在信息已固化到 `world_state` 后提前归档冗余历史。
+- 根目录 `CLAUDE.md` 支持静态规则注入；可在标题或独立行使用 `[file_system]`、`[api_call]`、`[python]` 等标签，运行时只会按当前任务标签加载相关片段。
+- 自动记忆笔记会把工具失败或大输出的教训写入本地 `agent_memory.json`，并根据 Orchestrator 识别的上下文标签按需加载。
 - Web 会话数据按 `session_id` 隔离到 `.data/sessions/{session_id}/`，包括 `conversation_archive.json`、`tool_results.json` 和 `events.jsonl`。
 
 ## 2. 运行链路
@@ -30,11 +30,13 @@
 flowchart TD
     U[用户输入] --> M[app/cli.py 维护 memory_messages]
     M --> O[Orchestrator: 判断复杂度并更新 todo]
-    O --> A[Agent Brain: agent_reasoning_node]
-    A -->|有 tool_calls| T[Tools: tools_execution_node]
-    T --> O
-    A -->|无 tool_calls| O
-    O -->|最终答复待质检| E[Evaluator: evaluate_response_node]
+    O --> MM[MemoryManager: 固化 World State 并清理冗余历史]
+    MM --> A[Agent Brain: agent_reasoning_node]
+    A --> MM
+    MM -->|有 tool_calls| T[Tools: tools_execution_node]
+    T --> MM
+    MM -->|需重新编排| O
+    MM -->|最终答复待质检| E[Evaluator: evaluate_response_node]
     E -->|PASS| END[输出最终回答]
     E -->|REJECT 且未达重试上限| O
     E -->|重试 3 次后熔断| END
@@ -80,6 +82,8 @@ class AgentState(TypedDict):
 | `session_id` | 会话标识，用于隔离对话归档、工具输出和 Web 事件日志 |
 | `task_complexity` | Orchestrator 判断出的任务复杂度，通常是 `simple` 或 `complex` |
 | `todo_list` | 复杂任务的分级 todo list，每项包含 `id`、`title`、`status`、`note`、`children` |
+| `context_tags` | Orchestrator 识别出的动态上下文标签，用于按需加载静态规则和 Agent Notes |
+| `world_state` | MemoryManager 固化的世界状态板，保存已确认任务进度、工具结果摘要和最终事实 |
 | `orchestrator_next` | Orchestrator 决定的下一节点，取值为 `agent` 或 `evaluate` |
 | `orchestrator_think` | Orchestrator 大模型决策时的思考过程（`<think>` 标签内容） |
 | `orchestrator_message` | Orchestrator 决策输出的原始 JSON 结果（去除了思考过程） |
@@ -96,13 +100,15 @@ class AgentState(TypedDict):
 主要职责：
 
 - 创建 LangGraph `StateGraph(AgentState)`。
-- 注册四个节点：`orchestrator`、`agent`、`tools`、`evaluate`。
+- 注册五个节点：`orchestrator`、`agent`、`tools`、`memory`、`evaluate`。
 - 定义条件路由：
-  - `orchestrator -> agent`：需要继续思考或行动。
-  - `orchestrator -> evaluate`：Agent 已给出自然语言答复，进入最终质检。
-  - `agent -> tools`：模型生成了工具调用。
-  - `agent -> orchestrator`：模型没有工具调用，先更新 todo 再决定是否质检。
-  - `tools -> orchestrator`：工具完成后，更新 todo 并继续推进。
+  - `orchestrator -> memory`：编排输出先交给 MemoryManager 固化。
+  - `agent -> memory`：模型输出先交给 MemoryManager 判断是否需要工具或重新编排。
+  - `tools -> memory`：工具结果先写入 World State，再回到 Orchestrator 更新 todo。
+  - `memory -> tools`：模型生成了工具调用。
+  - `memory -> orchestrator`：工具完成或 Agent 给出阶段性答复，需要重新编排。
+  - `memory -> agent`：Orchestrator 判断需要继续行动。
+  - `memory -> evaluate`：Agent 已给出自然语言答复，进入最终质检。
   - `evaluate -> END`：质检通过。
   - `evaluate -> orchestrator`：质检不通过，重新编排。
 - 提供交互式命令：

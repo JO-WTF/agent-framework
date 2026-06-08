@@ -24,6 +24,9 @@ class AgentState(TypedDict):
     session_id: NotRequired[str]  # Session identifier for data storage
     task_complexity: NotRequired[str]
     todo_list: NotRequired[list[dict[str, Any]]]
+    context_tags: NotRequired[list[str]]
+    world_state: NotRequired[dict[str, Any]]
+    last_node: NotRequired[str]
     orchestrator_next: NotRequired[str]
     orchestrator_think: NotRequired[str]
     orchestrator_message: NotRequired[str]
