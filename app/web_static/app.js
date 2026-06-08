@@ -33,8 +33,8 @@ const sessionId = getSessionId();
 
 const expandedEvents = new Set();
 const ROUTE_GROUPS = [
-  ["START", "orchestrator", "agent", "orchestrator", "evaluate", "END"],
-  ["agent", "tools", "orchestrator"],
+  ["START", "orchestrator", "memory", "agent", "memory", "orchestrator", "memory", "evaluate", "END"],
+  ["agent", "memory", "tools", "memory", "orchestrator"],
   ["evaluate", "orchestrator"],
 ];
 let mermaidModulePromise;
@@ -48,6 +48,8 @@ let currentState = {
   model_output: "",
   tool_runs: [],
   events: [],
+  context_tags: ["general"],
+  world_state: {},
   messages: [],
 };
 
@@ -189,35 +191,42 @@ function renderMessages(messages) {
   els.messageList.scrollTop = els.messageList.scrollHeight;
 }
 
-function calculateEventStepNumbers(events) {
-  const stepMap = new Map();
+function eventRouteNode(event) {
+  if (event.type === "run_start") return "orchestrator";
+  if (event.type === "node_update") return event.node || event.details?.node || null;
+  if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_error" || event.type === "tool_message") return "tools";
+  if (event.type === "run_complete") return "END";
+  return null;
+}
+
+function routeEventsForCurrentRun(events) {
   const lastRunStartIndex = events.map((event) => event.type).lastIndexOf("run_start");
-  const routeEvents = lastRunStartIndex >= 0 ? events.slice(lastRunStartIndex) : events;
+  return lastRunStartIndex >= 0 ? events.slice(lastRunStartIndex) : events;
+}
 
-  let currentRouteNode = "START";
-  let step = 1;
+function collectRouteTimeline(events) {
+  const sequence = [];
+  const eventSteps = new Map();
 
-  for (const event of routeEvents) {
-    let targetNode = null;
+  for (const event of routeEventsForCurrentRun(events)) {
+    const targetNode = eventRouteNode(event);
+    if (!targetNode) continue;
 
-    if (event.type === "run_start") {
-      targetNode = "orchestrator";
-    } else if (event.type === "node_update") {
-      targetNode = event.node || event.details?.node;
-    } else if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_error" || event.type === "tool_message") {
-      targetNode = "tools";
-    } else if (event.type === "run_complete") {
-      targetNode = "END";
+    if (event.type === "run_start" && sequence.length === 0) {
+      sequence.push("START");
     }
 
-    if (targetNode && targetNode !== currentRouteNode) {
-      stepMap.set(event.id || `${event.type}-${event.time}`, step);
-      step += 1;
-      currentRouteNode = targetNode;
-    }
+    if (sequence[sequence.length - 1] === targetNode) continue;
+
+    sequence.push(targetNode);
+    eventSteps.set(event.id || `${event.type}-${event.time}`, sequence.length - 1);
   }
 
-  return stepMap;
+  return { sequence, eventSteps };
+}
+
+function calculateEventStepNumbers(events) {
+  return collectRouteTimeline(events).eventSteps;
 }
 
 function renderEvents(events) {
@@ -587,6 +596,7 @@ function routeLabel(route) {
     orchestrator: "Orchestrator",
     agent: "Agent",
     tools: "Tools",
+    memory: "Memory",
     evaluate: "Evaluator",
     END: "END",
   };
@@ -616,33 +626,7 @@ function collectVisitedRoutes(state) {
 }
 
 function collectRouteSequence(state) {
-  const sequence = [];
-  const events = state.events || [];
-  const lastRunStartIndex = events.map((event) => event.type).lastIndexOf("run_start");
-  const routeEvents = lastRunStartIndex >= 0 ? events.slice(lastRunStartIndex) : events;
-  for (const event of routeEvents) {
-    if (event.type === "run_start") {
-      sequence.push("START", "orchestrator");
-    }
-    if (event.type === "node_update") {
-      const node = event.node || event.details?.node;
-      if (node) sequence.push(node);
-    }
-    if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_error" || event.type === "tool_message") {
-      sequence.push("tools");
-    }
-    if (event.type === "run_complete") {
-      sequence.push("END");
-    }
-  }
-
-  const deduped = [];
-  for (const route of sequence) {
-    if (deduped[deduped.length - 1] !== route) {
-      deduped.push(route);
-    }
-  }
-  return deduped;
+  return collectRouteTimeline(state.events || []).sequence;
 }
 
 function collectRouteEdgeLabels(state) {
@@ -683,6 +667,7 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels) {
     E: mermaidNodeClass("evaluate", active, visited),
     X: mermaidNodeClass("END", active, visited),
     T: mermaidNodeClass("tools", active, visited),
+    M: mermaidNodeClass("memory", active, visited),
   };
 
   const classLines = Object.entries(nodeClasses)
@@ -690,12 +675,14 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels) {
     .join("\n");
   const edges = [
     ["START->orchestrator", "S", "O", "solid"],
-    ["orchestrator->agent", "O", "A", "solid"],
-    ["agent->orchestrator", "A", "O", "solid"],
-    ["orchestrator->evaluate", "O", "E", "solid"],
+    ["orchestrator->memory", "O", "M", "solid"],
+    ["memory->agent", "M", "A", "solid"],
+    ["agent->memory", "A", "M", "solid"],
+    ["memory->tools", "M", "T", "dotted"],
+    ["tools->memory", "T", "M", "dotted"],
+    ["memory->orchestrator", "M", "O", "solid"],
+    ["memory->evaluate", "M", "E", "solid"],
     ["evaluate->END", "E", "X", "solid"],
-    ["agent->tools", "A", "T", "dotted"],
-    ["tools->orchestrator", "T", "O", "dotted"],
     ["evaluate->orchestrator", "E", "O", "dotted"],
   ];
   const nodeSyntax = {
@@ -705,6 +692,7 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels) {
     E: 'E["Evaluator"]',
     X: 'X(["END"])',
     T: 'T["Tools"]',
+    M: 'M["MemoryManager"]',
   };
   const edgeLines = edges.map(([key, from, to, style]) => {
     const label = edgeLabels.get(key)?.join(", ");
@@ -895,6 +883,8 @@ els.chatForm.addEventListener("submit", async (event) => {
     model_output: "",
     tool_runs: [],
     events: [],
+    context_tags: ["general"],
+    world_state: {},
     messages: [
       ...(currentState.messages || []),
       { role: "user", content: message, tool_calls: [] },
