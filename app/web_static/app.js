@@ -40,6 +40,16 @@ const ROUTE_GROUPS = [
 let mermaidModulePromise;
 let routeRenderVersion = 0;
 let lastRenderedDefinition = "";
+let currentState = {
+  status: "idle",
+  current_node: "",
+  task_complexity: "unknown",
+  todo_list: [],
+  model_output: "",
+  tool_runs: [],
+  events: [],
+  messages: [],
+};
 
 
 if (window.marked) {
@@ -807,6 +817,8 @@ function renderRoutes(state) {
 }
 
 function renderState(state) {
+  currentState = { ...currentState, ...(state || {}) };
+  state = currentState;
   const status = state.status || "idle";
   setBadge(els.statusBadge, statusLabel(status), status);
   const node = state.current_node || "-";
@@ -851,8 +863,15 @@ function connectWs() {
   });
 
   ws.addEventListener("message", (message) => {
-    const payload = JSON.parse(message.data);
-    renderState(payload.state);
+    try {
+      const payload = JSON.parse(message.data);
+      if (payload.state) {
+        renderState(payload.state);
+      }
+    } catch (error) {
+      console.error("Failed to render websocket update", error);
+      loadState().catch((loadError) => console.error("Failed to reload state after websocket error", loadError));
+    }
   });
 
   ws.addEventListener("close", () => {
@@ -866,20 +885,49 @@ els.chatForm.addEventListener("submit", async (event) => {
   const message = els.messageInput.value.trim();
   if (!message) return;
 
-  const response = await fetch(`/api/chat?session_id=${encodeURIComponent(sessionId)}`, {
-    method: "POST",
-    headers: sessionHeaders(),
-    body: JSON.stringify({ message }),
-  });
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    alert(payload.detail || "发送失败");
-    return;
-  }
-
+  const previousState = currentState;
+  const optimisticState = {
+    ...currentState,
+    status: "running",
+    current_node: "orchestrator",
+    task_complexity: "unknown",
+    todo_list: [],
+    model_output: "",
+    tool_runs: [],
+    events: [],
+    messages: [
+      ...(currentState.messages || []),
+      { role: "user", content: message, tool_calls: [] },
+    ],
+  };
   els.messageInput.value = "";
-  renderRoutes({ current_node: "", events: [] });
+  renderState(optimisticState);
+
+  try {
+    const response = await fetch(`/api/chat?session_id=${encodeURIComponent(sessionId)}`, {
+      method: "POST",
+      headers: sessionHeaders(),
+      body: JSON.stringify({ message }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      renderState(previousState);
+      els.messageInput.value = message;
+      alert(payload.detail || "发送失败");
+      return;
+    }
+
+    if (payload.state) {
+      renderState(payload.state);
+    } else {
+      await loadState();
+    }
+  } catch (error) {
+    renderState(previousState);
+    els.messageInput.value = message;
+    alert(`发送失败：${error.message}`);
+  }
 });
 
 els.messageInput.addEventListener("keydown", (event) => {

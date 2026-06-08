@@ -193,6 +193,7 @@ Web UI 是一个轻量 FastAPI 应用，复用同一个 LangGraph agent：
 | `LLM_API_KEY` | 通用模型 API Key |
 | `LLM_BASE_URL` | OpenAI 兼容接口地址，可选 |
 | `LLM_TEMPERATURE` | 模型温度，默认 `0.1` |
+| `MAX_CONTEXT_SIZE_KB` | 最大序列化对话上下文尺寸，单位 KB；默认 `512` |
 | `TAVILY_API_KEY` | Tavily 搜索 API Key |
 
 不要把真实 `.env` 提交到公开仓库。当前仓库中 `.gitignore` 已忽略 `.env` 和 `.venv`。
@@ -253,19 +254,33 @@ Web UI 是一个轻量 FastAPI 应用，复用同一个 LangGraph agent：
 
 ## 7. 启动方式
 
+首次安装依赖（任选其一）：
+
+```bash
+uv venv
+uv pip install -r requirements.txt
+```
+
+或使用标准 venv/pip：
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
 命令行模式：
 
 ```bash
-source .venv/bin/activate
 ./run_cli.sh
 ```
 
 Web UI 模式：
 
 ```bash
-source .venv/bin/activate
 ./run_web.sh
 ```
+
+`run_cli.sh` 和 `run_web.sh` 会优先使用已激活的虚拟环境，其次使用项目内 `.venv`，最后在安装了 `uv` 时回退到 `uv run --with-requirements requirements.txt`。
 
 然后在浏览器打开 `http://127.0.0.1:8000`。
 

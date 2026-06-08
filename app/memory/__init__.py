@@ -1,6 +1,9 @@
 from app.memory.store import (
     append_session_event,
     archive_messages,
+    context_size_bytes,
+    get_max_context_size_bytes,
+    get_max_context_size_kb,
     load_agent_notes,
     load_static_guidelines,
     save_agent_note,
@@ -12,6 +15,9 @@ from app.memory.store import (
 __all__ = [
     "append_session_event",
     "archive_messages",
+    "context_size_bytes",
+    "get_max_context_size_bytes",
+    "get_max_context_size_kb",
     "load_agent_notes",
     "load_static_guidelines",
     "save_agent_note",
