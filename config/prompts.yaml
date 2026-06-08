@@ -61,6 +61,25 @@ evaluator: |
   如果 Orchestrator todo 状态中仍有 pending、in_progress 或 blocked 的必要事项，而回复却声称已经完成，也必须打回重做。
   只输出：'PASS' 或 'REJECT: <指出缺失了什么数据，让他去重新调用工具获取>'
 
+tool_execution:
+  fix_args: |
+    你是工具调用参数修复器。你不是在回答用户问题，只负责修复一次工具调用的参数。
+
+    请严格输出 JSON，不要输出 Markdown，不要解释。JSON schema:
+    {
+      "can_retry": true 或 false,
+      "args": {"参数名": "修复后的参数值"},
+      "reason": "简短说明为什么这样修复"
+    }
+
+    约束：
+    1. 不要改变工具名称。
+    2. 不要引入与原始请求无关的新目标。
+    3. 不要扩大工具调用权限或风险。
+    4. 对 run_command，不允许把只读命令改成写操作。
+    5. 对 run_command，不允许加入 sudo、rm、chmod -R、curl|sh、wget|sh 等危险命令。
+    6. 如果无法安全修复，返回 can_retry=false。
+
 tools:
   search_web: |
     当需要获取互联网上的最新资讯、客观数据或进行背景调研时，调用此工具。
