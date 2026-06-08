@@ -1,36 +1,28 @@
 import sys
 import uuid
 import asyncio
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.config import AgentState, StreamingConsoleCallback
 from app.memory.store import trim_messages
-from app.nodes import orchestrator_node, agent_reasoning_node, tools_execution_node, evaluate_response_node
+from app.nodes import (
+    agent_reasoning_node,
+    evaluate_response_node,
+    memory_manager_node,
+    orchestrator_node,
+    route_after_memory,
+    tools_execution_node,
+)
 from app.logging_config import logger
 
 # ----------------- 路由裁判逻辑 -----------------
-def should_continue(state: AgentState) -> str:
-    """大脑思考完去哪儿？如果包含 tool_calls 则去工具节点，否则去质检"""
-    last_message = state["messages"][-1]
-    if getattr(last_message, "tool_calls", None):
-        return "tools"
-    return "evaluate"
-
 def route_after_evaluation(state: AgentState) -> str:
     """质检完去哪儿？通过就结束，不通过就回大脑"""
     if state["eval_status"] == "PASS":
         return "end"
     return "orchestrator"
-
-def route_after_orchestration(state: AgentState) -> str:
-    """编排节点判断下一步：继续行动还是进入质检"""
-    last_message = state["messages"][-1]
-    has_final_reply = isinstance(last_message, AIMessage) and not getattr(last_message, "tool_calls", None)
-    if state.get("orchestrator_next") == "evaluate" and has_final_reply:
-        return "evaluate"
-    return "agent"
 
 # ----------------- 图的组装 -----------------
 def build_agent_graph():
@@ -38,12 +30,18 @@ def build_agent_graph():
     workflow.add_node("orchestrator", orchestrator_node)
     workflow.add_node("agent", agent_reasoning_node)
     workflow.add_node("tools", tools_execution_node)
+    workflow.add_node("memory", memory_manager_node)
     workflow.add_node("evaluate", evaluate_response_node)
 
     workflow.add_edge(START, "orchestrator")
-    workflow.add_conditional_edges("orchestrator", route_after_orchestration, {"agent": "agent", "evaluate": "evaluate"})
-    workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", "evaluate": "orchestrator"})
-    workflow.add_edge("tools", "orchestrator")  # 工具执行完回编排节点，先更新 todo 再继续思考
+    workflow.add_edge("orchestrator", "memory")
+    workflow.add_edge("agent", "memory")
+    workflow.add_edge("tools", "memory")
+    workflow.add_conditional_edges(
+        "memory",
+        route_after_memory,
+        {"agent": "agent", "tools": "tools", "orchestrator": "orchestrator", "evaluate": "evaluate"},
+    )
     workflow.add_conditional_edges("evaluate", route_after_evaluation, {"end": END, "orchestrator": "orchestrator"})
 
     return workflow.compile(checkpointer=MemorySaver())
@@ -84,6 +82,8 @@ async def main():
             "session_id": "cli",
             "task_complexity": "unknown",
             "todo_list": [],
+            "context_tags": ["general"],
+            "world_state": {},
             "orchestrator_next": "agent",
         }
 

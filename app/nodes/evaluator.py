@@ -13,7 +13,7 @@ async def evaluate_response_node(state: AgentState, config: RunnableConfig):
 
     if rev_count >= 3:
         logger.warning("⚠️ \033[91m[熔断]\033[0m 达最大重试，强制通过。")
-        return {"eval_status": "PASS"}
+        return {"eval_status": "PASS", "last_node": "evaluate"}
 
     user_q = next((m.content for m in reversed(state["messages"][:-1]) if isinstance(m, HumanMessage)), "")
     draft_reply = state["messages"][-1].content
@@ -21,7 +21,7 @@ async def evaluate_response_node(state: AgentState, config: RunnableConfig):
     trimmed_messages = trim_messages(state["messages"], session_id=session_id)
     recent_messages = summarize_recent_messages({"messages": trimmed_messages})
 
-    system_prompt = get_system_prompt("evaluator")
+    system_prompt = get_system_prompt("evaluator", context_tags=state.get("context_tags"))
     response = await llm_client.ainvoke([
         SystemMessage(content=system_prompt),
         HumanMessage(content=(
@@ -37,7 +37,7 @@ async def evaluate_response_node(state: AgentState, config: RunnableConfig):
         reason = eval_result.replace("REJECT:", "").strip()
         logger.warning(f"❌ \033[35m[不合格]\033[0m 打回重做。原因: {reason}")
         reject_msg = HumanMessage(content=f"[质检打回] 回答不合格！原因：{reason}。请参考 todo list 重新规划下一步，并重新调用必要工具获取数据。")
-        return {"eval_status": "REJECT", "revision_count": rev_count + 1, "messages": [reject_msg]}
+        return {"eval_status": "REJECT", "revision_count": rev_count + 1, "messages": [reject_msg], "last_node": "evaluate"}
 
     logger.info("✅ \033[92m[合格]\033[0m 准备输出。")
-    return {"eval_status": "PASS"}
+    return {"eval_status": "PASS", "last_node": "evaluate"}

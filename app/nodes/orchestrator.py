@@ -5,11 +5,13 @@ from langchain_core.runnables.config import RunnableConfig
 
 from app.config import AgentState, llm_client
 from app.logging_config import logger
-from app.memory.store import trim_messages
+from app.memory.store import normalize_context_tags, trim_messages
 from app.nodes.common import (
     default_orchestrator_next,
+    format_available_context_tags,
     format_todo_items,
     get_system_prompt,
+    infer_context_tags_from_state,
     parse_json_object,
     silent_config,
     summarize_recent_messages,
@@ -18,7 +20,8 @@ from app.nodes.common import (
 
 async def orchestrator_node(state: AgentState, config: RunnableConfig):
     logger.info("🧭 \033[94m[Node: Orchestrator]\033[0m 正在判断任务复杂度并更新 todo list...")
-    system_prompt = get_system_prompt("orchestrator")
+    initial_context_tags = infer_context_tags_from_state(state)[:4]
+    system_prompt = get_system_prompt("orchestrator", context_tags=initial_context_tags)
     current_todo_json = json.dumps(state.get("todo_list", []), ensure_ascii=False, indent=2)
     session_id = state.get("session_id")
     trimmed_messages = trim_messages(state["messages"], session_id=session_id)
@@ -26,6 +29,8 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
 
     user_prompt = (
         f"当前任务复杂度: {state.get('task_complexity', 'unknown')}\n\n"
+        f"当前上下文标签: {', '.join(initial_context_tags)}\n"
+        f"可选上下文标签: {format_available_context_tags()}\n\n"
         f"当前 todo_list JSON:\n{current_todo_json}\n\n"
         f"最近消息:\n{recent_messages}"
     )
@@ -56,11 +61,14 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
         next_node = parsed.get("next", default_orchestrator_next(state))
         if next_node not in {"agent", "evaluate"}:
             next_node = default_orchestrator_next(state)
+        raw_context_tags = parsed.get("context_tags") or initial_context_tags
+        context_tags = normalize_context_tags(raw_context_tags if isinstance(raw_context_tags, (list, str)) else initial_context_tags)[:4]
     except Exception as exc:
         logger.warning(f"⚠️ \033[93m[Orchestrator]\033[0m JSON 解析失败，使用保守路由。原因: {exc}")
         complexity = state.get("task_complexity", "simple")
         todo_list = state.get("todo_list", [])
         next_node = default_orchestrator_next(state)
+        context_tags = initial_context_tags
 
     # Only a final AI reply can be evaluated. A fresh user message, tool result,
     # or AI tool-call must always go back to the agent first.
@@ -76,6 +84,8 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
         "task_complexity": complexity,
         "todo_list": todo_list,
         "orchestrator_next": next_node,
+        "context_tags": context_tags,
+        "last_node": "orchestrator",
         "orchestrator_think": think_content,
         "orchestrator_message": message_content,
         "orchestrator_prompt": [
