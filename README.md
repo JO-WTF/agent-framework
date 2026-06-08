@@ -253,19 +253,33 @@ Web UI 是一个轻量 FastAPI 应用，复用同一个 LangGraph agent：
 
 ## 7. 启动方式
 
+首次安装依赖（任选其一）：
+
+```bash
+uv venv
+uv pip install -r requirements.txt
+```
+
+或使用标准 venv/pip：
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
 命令行模式：
 
 ```bash
-source .venv/bin/activate
 ./run_cli.sh
 ```
 
 Web UI 模式：
 
 ```bash
-source .venv/bin/activate
 ./run_web.sh
 ```
+
+`run_cli.sh` 和 `run_web.sh` 会优先使用已激活的虚拟环境，其次使用项目内 `.venv`，最后在安装了 `uv` 时回退到 `uv run --with-requirements requirements.txt`。
 
 然后在浏览器打开 `http://127.0.0.1:8000`。
 
