@@ -6,19 +6,26 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables.config import RunnableConfig
 
 from app.config import PROMPTS
-from app.memory.store import load_agent_notes, load_static_guidelines
+from app.memory.store import (
+    KNOWN_CONTEXT_TAGS,
+    infer_context_tags,
+    load_agent_notes,
+    load_static_guidelines,
+    normalize_context_tags,
+)
 
 
-def get_system_prompt(prompt_key: str) -> str:
+def get_system_prompt(prompt_key: str, context_tags: list[str] | str | None = None) -> str:
     current_date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    static_guidelines = load_static_guidelines()
-    agent_notes = load_agent_notes()
+    selected_tags = normalize_context_tags(context_tags)
+    static_guidelines = load_static_guidelines(selected_tags)
+    agent_notes = load_agent_notes(selected_tags)
     global_prompt = PROMPTS.get("global_context", "").replace("{current_date}", current_date_str)
     specific_prompt = PROMPTS.get(prompt_key, "").replace("{current_date}", current_date_str)
 
-    sections = []
+    sections = [f"【动态上下文标签】{', '.join(selected_tags)}"]
     if static_guidelines:
-        sections.append("【静态全局规则】\n" + static_guidelines)
+        sections.append("【静态规则（按需加载）】\n" + static_guidelines)
     if agent_notes:
         sections.append(agent_notes)
     sections.append(global_prompt)
@@ -65,14 +72,27 @@ def format_todo_items(items: list[dict], indent: int = 0) -> list[str]:
     return lines
 
 
+def format_world_state_context(state: dict, max_chars: int = 2000) -> str:
+    world_state = state.get("world_state") or {}
+    if not world_state:
+        return "World State：暂无已固化事实。"
+    compact = json.dumps(world_state, ensure_ascii=False, default=str, indent=2)
+    if len(compact) > max_chars:
+        compact = compact[:max_chars] + "\n...（World State 已截断）"
+    return "World State：\n" + compact
+
+
 def format_todo_context(state: dict) -> str:
     todo_list = state.get("todo_list") or []
     complexity = state.get("task_complexity", "simple")
+    context_tags = normalize_context_tags(state.get("context_tags"))
+    tags_line = f"上下文标签：{', '.join(context_tags)}"
+    world_state_context = format_world_state_context(state)
     if not todo_list:
-        return f"任务复杂度：{complexity}\n当前没有 todo list。"
+        return f"任务复杂度：{complexity}\n{tags_line}\n{world_state_context}\n当前没有 todo list。"
 
     lines = format_todo_items(todo_list)
-    return f"任务复杂度：{complexity}\n当前 todo list：\n" + "\n".join(lines)
+    return f"任务复杂度：{complexity}\n{tags_line}\n{world_state_context}\n当前 todo list：\n" + "\n".join(lines)
 
 
 def summarize_recent_messages(state: dict, limit: int = 8) -> str:
@@ -85,6 +105,29 @@ def summarize_recent_messages(state: dict, limit: int = 8) -> str:
             content = f"{content}\n工具调用: {tool_calls}"
         summaries.append(f"{role}: {content}")
     return "\n\n".join(summaries)
+
+
+def infer_context_tags_from_state(state: dict, fallback: list[str] | str | None = None) -> list[str]:
+    if state.get("context_tags"):
+        return normalize_context_tags(state.get("context_tags"))
+
+    text_parts: list[str] = []
+    for message in state.get("messages", [])[-6:]:
+        text_parts.append(str(getattr(message, "content", "")))
+        tool_calls = getattr(message, "tool_calls", None)
+        if tool_calls:
+            text_parts.append(str(tool_calls))
+    for item in state.get("todo_list") or []:
+        text_parts.append(json.dumps(item, ensure_ascii=False, default=str))
+
+    inferred = infer_context_tags("\n".join(text_parts))
+    if inferred == ["general"] and fallback:
+        return normalize_context_tags(fallback)
+    return inferred
+
+
+def format_available_context_tags() -> str:
+    return ", ".join(KNOWN_CONTEXT_TAGS)
 
 
 def default_orchestrator_next(state: dict) -> str:
