@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,9 @@ MAX_ARCHIVE_RECORDS = 200
 MAX_TOOL_RESULTS = 200
 MAX_SUMMARY_CHARS = 1024
 MAX_NOTE_SUMMARY_CHARS = 200
+MAX_CONTEXT_SIZE_BYTES_CAP = 512 * 1024
+DEFAULT_MAX_CONTEXT_SIZE_BYTES = MAX_CONTEXT_SIZE_BYTES_CAP
+MAX_CONTEXT_SIZE_ENV = "MAX_CONTEXT_SIZE_BYTES"
 
 
 def _ensure_dirs() -> None:
@@ -132,6 +136,75 @@ def _serialize_message(message: Any) -> dict[str, Any]:
     }
 
 
+def get_max_context_size_bytes() -> int:
+    raw_value = os.getenv(MAX_CONTEXT_SIZE_ENV, str(DEFAULT_MAX_CONTEXT_SIZE_BYTES)).strip()
+    try:
+        configured = int(raw_value)
+    except ValueError:
+        configured = DEFAULT_MAX_CONTEXT_SIZE_BYTES
+    if configured <= 0:
+        configured = DEFAULT_MAX_CONTEXT_SIZE_BYTES
+    return min(configured, MAX_CONTEXT_SIZE_BYTES_CAP)
+
+
+def _message_size_bytes(message: Any) -> int:
+    return len(json.dumps(_serialize_message(message), ensure_ascii=False, default=str).encode("utf-8"))
+
+
+def context_size_bytes(messages: list[Any]) -> int:
+    return sum(_message_size_bytes(message) for message in messages)
+
+
+def _truncate_message_content(message: Any, max_bytes: int) -> None:
+    content = str(getattr(message, "content", ""))
+    suffix = "\n...（已截断以满足最大上下文尺寸）"
+    content_bytes = len(content.encode("utf-8"))
+    overhead = _message_size_bytes(message) - content_bytes
+    available = max(0, max_bytes - overhead)
+    suffix_bytes = suffix.encode("utf-8")
+
+    if available <= len(suffix_bytes):
+        truncated = suffix_bytes[:available].decode("utf-8", errors="ignore")
+    else:
+        content_budget = available - len(suffix_bytes)
+        truncated = content.encode("utf-8")[:content_budget].decode("utf-8", errors="ignore") + suffix
+    message.content = truncated
+
+
+def _archive_removed_messages(messages: list[Any], session_id: str | None) -> None:
+    if messages and session_id:
+        archive_messages(messages, session_id=session_id)
+
+
+def _remove_leading_tool_messages(messages: list[Any]) -> list[Any]:
+    trimmed = list(messages)
+    while trimmed and isinstance(trimmed[0], ToolMessage):
+        trimmed.pop(0)
+    return trimmed
+
+
+def _enforce_context_size(messages: list[Any], max_bytes: int, session_id: str | None) -> list[Any]:
+    trimmed = list(messages)
+    removed: list[Any] = []
+    while len(trimmed) > 1 and context_size_bytes(trimmed) > max_bytes:
+        removed.append(trimmed.pop(0))
+
+    trimmed = _remove_leading_tool_messages(trimmed)
+
+    if removed:
+        _archive_removed_messages(removed, session_id)
+        summary = _build_summary_message(removed)
+        trimmed.insert(0, summary)
+        while len(trimmed) > 1 and context_size_bytes(trimmed) > max_bytes:
+            trimmed.pop(0)
+        trimmed = _remove_leading_tool_messages(trimmed)
+
+    if trimmed and context_size_bytes(trimmed) > max_bytes:
+        _truncate_message_content(trimmed[-1], max_bytes)
+
+    return trimmed
+
+
 def archive_messages(messages: list[Any], session_id: str | None = None) -> str:
     """Archive messages in session-specific directory."""
     if not messages:
@@ -192,8 +265,9 @@ def _build_summary_message(messages: list[Any]) -> HumanMessage:
 
 
 def trim_messages(messages: list[Any], keep_recent: int = DEFAULT_MESSAGE_WINDOW, session_id: str | None = None) -> list[Any]:
+    max_context_bytes = get_max_context_size_bytes()
     if len(messages) <= keep_recent:
-        return list(messages)
+        return _enforce_context_size(list(messages), max_context_bytes, session_id)
 
     early_messages = messages[:-keep_recent]
     recent_messages = list(messages[-keep_recent:])
@@ -223,17 +297,9 @@ def trim_messages(messages: list[Any], keep_recent: int = DEFAULT_MESSAGE_WINDOW
 
     omitted = [m for m in early_messages if id(m) not in seen_ids]
     if omitted:
-        # Use session_id if provided, otherwise skip archival (CLI will use default session)
-        if session_id:
-            archive_messages(omitted, session_id=session_id)
-        else:
-            # For backward compatibility, try to use context session_id
-            from app.tools.context import get_session_id
-            current_session = get_session_id()
-            if current_session:
-                archive_messages(omitted, session_id=current_session)
+        _archive_removed_messages(omitted, session_id)
         # Place the summary message at the start of the list to prevent breaking tool_calls -> tool adjacency
-        return [_build_summary_message(omitted)] + preserved + recent_messages
+        return _enforce_context_size([_build_summary_message(omitted)] + preserved + recent_messages, max_context_bytes, session_id)
 
-    return preserved + recent_messages
+    return _enforce_context_size(preserved + recent_messages, max_context_bytes, session_id)
 
