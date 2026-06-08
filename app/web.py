@@ -173,15 +173,17 @@ class SessionManager:
     def __init__(self) -> None:
         self.sessions: dict[str, ConsoleSession] = {}
 
-    def create_session(self) -> tuple[str, ConsoleSession]:
-        session_id = str(uuid.uuid4())
+    def create_session(self, session_id: str | None = None) -> tuple[str, ConsoleSession]:
+        session_id = session_id or str(uuid.uuid4())
         session = ConsoleSession(session_id)
         self.sessions[session_id] = session
         return session_id, session
 
     def get_session(self, session_id: str | None) -> tuple[str, ConsoleSession]:
-        if session_id and session_id in self.sessions:
-            return session_id, self.sessions[session_id]
+        if session_id:
+            if session_id in self.sessions:
+                return session_id, self.sessions[session_id]
+            return self.create_session(session_id)
         return self.create_session()
 
     def remove_session(self, session_id: str) -> None:
@@ -341,25 +343,7 @@ def resolve_session(request: Request) -> tuple[str, ConsoleSession]:
     return manager.get_session(session_id)
 
 
-async def run_agent(user_text: str, session: ConsoleSession, session_id: str | None = None) -> None:
-    user_message = HumanMessage(content=user_text)
-    session.memory_messages.append(user_message)
-    session.state.update({
-        "status": "running",
-        "current_node": "",
-        "task_complexity": "unknown",
-        "todo_list": [],
-        "model_output": "",
-        "tool_runs": [],
-        "events": [],
-    })
-    session.state["messages"].append({"role": "user", "content": user_text, "tool_calls": []})
-    await session.publish({
-        "type": "run_start",
-        "title": "任务开始",
-        "details": {"user_message": user_text, "thread_id": session.thread_id},
-    })
-
+async def run_agent(user_message: HumanMessage, session: ConsoleSession, session_id: str | None = None) -> None:
     session.memory_messages = trim_messages(session.memory_messages, session_id=session_id)
     initial_input = {
         "messages": session.memory_messages,
@@ -449,6 +433,7 @@ async def run_agent(user_text: str, session: ConsoleSession, session_id: str | N
             session.memory_messages.append(final_reply)
             session.memory_messages = trim_messages(session.memory_messages, session_id=session_id)
             session.state["messages"] = [serialize_message(m) for m in session.memory_messages]
+            await session.broadcast({"type": "messages_update", "title": "对话已更新", "details": {}})
 
         session.state["status"] = "idle"
         session.state["current_node"] = ""
@@ -490,6 +475,8 @@ async def chat(request: Request, payload: ChatRequest):
     if session.running_task and not session.running_task.done():
         raise HTTPException(status_code=409, detail="agent is already running")
 
+    user_message = HumanMessage(content=message)
+    session.memory_messages.append(user_message)
     session.state.update({
         "status": "running",
         "current_node": "orchestrator",
@@ -498,9 +485,15 @@ async def chat(request: Request, payload: ChatRequest):
         "model_output": "",
         "tool_runs": [],
         "events": [],
+        "messages": [serialize_message(m) for m in session.memory_messages],
     })
-    session.running_task = asyncio.create_task(run_agent(message, session, session_id))
-    return {"status": "started", "session_id": session_id}
+    await session.publish({
+        "type": "run_start",
+        "title": "任务开始",
+        "details": {"user_message": message, "thread_id": session.thread_id},
+    })
+    session.running_task = asyncio.create_task(run_agent(user_message, session, session_id))
+    return {"status": "started", "session_id": session_id, "state": session.snapshot()}
 
 
 @app.post("/api/stop")
@@ -527,7 +520,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     session.subscribers.add(queue)
-    await websocket.send_json({"event": {"type": "snapshot"}, "state": session.snapshot()})
+    await websocket.send_json({"event": {"type": "snapshot"}, "session_id": session_id, "state": session.snapshot()})
     try:
         while True:
             payload = await queue.get()
