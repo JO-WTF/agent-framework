@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agent Console</title>
-    <link rel="stylesheet" href="/static/styles.css?v=orchestrator-think-v8" />
+    <link rel="stylesheet" href="/static/styles.css?v=progress-split-v1" />
 
 
 
@@ -72,15 +72,19 @@
             </div>
           </div>
 
-          <div class="runtime-section todo-wrap">
-            <div class="section-title">Todo 进度</div>
-            <div id="todoList" class="todo-list empty">暂无 todo</div>
-          </div>
+          <div id="progressSplit" class="progress-split">
+            <div class="runtime-section todo-wrap">
+              <div class="section-title">Todo 进度</div>
+              <div id="todoList" class="todo-list empty">暂无 todo</div>
+            </div>
 
-          <div class="runtime-section route-wrap">
-            <div class="section-title">路由编排</div>
-            <div id="routeList" class="route-list">
-              <div class="route-diagram loading">正在加载 Mermaid 流程图...</div>
+            <div id="progressResizeHandle" class="progress-resize-handle" role="separator" aria-orientation="horizontal" aria-label="调整 Todo 进度和路由编排高度" tabindex="0"></div>
+
+            <div class="runtime-section route-wrap">
+              <div class="section-title">路由编排</div>
+              <div id="routeList" class="route-list">
+                <div class="route-diagram loading">正在加载 Mermaid 流程图...</div>
+              </div>
             </div>
           </div>
         </aside>
@@ -92,6 +96,6 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked-katex-extension@5.1.2/lib/index.umd.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
-    <script type="module" src="/static/app.js?v=orchestrator-think-v8"></script>
+    <script type="module" src="/static/app.js?v=progress-split-v1"></script>
   </body>
 </html>

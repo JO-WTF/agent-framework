@@ -421,19 +421,57 @@ textarea {
   white-space: pre-wrap;
 }
 
-.timeline-wrap,
-.todo-wrap {
+.timeline-wrap {
   flex: 1;
   min-height: 0;
   overflow: auto;
 }
 
-.route-wrap {
+.progress-split {
   flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(120px, 42%) 10px minmax(160px, 1fr);
+  overflow: hidden;
+}
+
+.todo-wrap,
+.route-wrap {
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+body.progress-resizing {
+  cursor: row-resize;
+  user-select: none;
+}
+
+.progress-resize-handle {
+  position: relative;
+  cursor: row-resize;
+  min-height: 10px;
+  border-radius: 999px;
+  outline: none;
+}
+
+.progress-resize-handle::before {
+  content: "";
+  position: absolute;
+  left: 28%;
+  right: 28%;
+  top: 50%;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--border);
+  transform: translateY(-50%);
+}
+
+.progress-resize-handle:hover::before,
+.progress-resize-handle:focus-visible::before,
+.progress-resize-handle.dragging::before {
+  background: var(--accent);
 }
 
 .runtime-panel,
@@ -449,6 +487,12 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.todo-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .event-row,
@@ -800,6 +844,10 @@ textarea {
 
   .topbar-actions {
     flex-wrap: wrap;
+  }
+
+  .progress-split {
+    grid-template-rows: minmax(160px, 1fr) 10px minmax(220px, 1fr);
   }
 }
 

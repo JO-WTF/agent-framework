@@ -12,11 +12,17 @@ const els = {
   eventList: document.getElementById("eventList"),
   todoList: document.getElementById("todoList"),
   routeList: document.getElementById("routeList"),
+  progressSplit: document.getElementById("progressSplit"),
+  progressResizeHandle: document.getElementById("progressResizeHandle"),
   complexityValue: document.getElementById("complexityValue"),
   currentNodeValue: document.getElementById("currentNodeValue"),
 };
 
 const SESSION_STORAGE_KEY = "agent_session_id";
+const PROGRESS_SPLIT_STORAGE_KEY = "agent_progress_split_todo_px";
+const PROGRESS_SPLIT_HANDLE_HEIGHT = 10;
+const PROGRESS_SPLIT_MIN_TODO = 120;
+const PROGRESS_SPLIT_MIN_ROUTE = 160;
 
 function getSessionId() {
   let id = localStorage.getItem(SESSION_STORAGE_KEY);
@@ -81,6 +87,113 @@ if (window.marked) {
       throwOnError: false
     }));
   }
+}
+
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function progressSplitBounds() {
+  const split = els.progressSplit;
+  if (!split) return null;
+  const totalHeight = split.clientHeight;
+  if (!totalHeight) return null;
+  const maxTodo = Math.max(PROGRESS_SPLIT_MIN_TODO, totalHeight - PROGRESS_SPLIT_HANDLE_HEIGHT - PROGRESS_SPLIT_MIN_ROUTE);
+  return { totalHeight, maxTodo };
+}
+
+function fitRouteDiagramToContainer() {
+  const diagram = els.routeList?.querySelector(".route-diagram");
+  const renderedSvg = diagram?.querySelector("svg");
+  if (!diagram || !renderedSvg) return;
+
+  renderedSvg.setAttribute("width", "100%");
+  renderedSvg.setAttribute("height", "100%");
+  renderedSvg.style.width = "100%";
+  renderedSvg.style.height = "100%";
+  renderedSvg.style.maxWidth = "100%";
+  renderedSvg.style.maxHeight = "100%";
+  renderedSvg.style.display = "block";
+}
+
+function applyProgressSplit(todoHeight, persist = false) {
+  const bounds = progressSplitBounds();
+  if (!bounds) return;
+  const nextTodoHeight = Math.round(clamp(todoHeight, PROGRESS_SPLIT_MIN_TODO, bounds.maxTodo));
+  els.progressSplit.style.gridTemplateRows = `${nextTodoHeight}px ${PROGRESS_SPLIT_HANDLE_HEIGHT}px minmax(${PROGRESS_SPLIT_MIN_ROUTE}px, 1fr)`;
+  if (els.progressResizeHandle) {
+    els.progressResizeHandle.setAttribute("aria-valuemin", String(PROGRESS_SPLIT_MIN_TODO));
+    els.progressResizeHandle.setAttribute("aria-valuemax", String(bounds.maxTodo));
+    els.progressResizeHandle.setAttribute("aria-valuenow", String(nextTodoHeight));
+  }
+  if (persist) {
+    localStorage.setItem(PROGRESS_SPLIT_STORAGE_KEY, String(nextTodoHeight));
+  }
+  fitRouteDiagramToContainer();
+}
+
+function restoreProgressSplit() {
+  const bounds = progressSplitBounds();
+  if (!bounds) return;
+  const saved = Number(localStorage.getItem(PROGRESS_SPLIT_STORAGE_KEY));
+  const defaultTodoHeight = Math.round((bounds.totalHeight - PROGRESS_SPLIT_HANDLE_HEIGHT) * 0.42);
+  applyProgressSplit(Number.isFinite(saved) && saved > 0 ? saved : defaultTodoHeight, false);
+}
+
+function initializeProgressSplitResizer() {
+  const split = els.progressSplit;
+  const handle = els.progressResizeHandle;
+  if (!split || !handle) return;
+
+  let dragStartY = 0;
+  let dragStartTodoHeight = 0;
+
+  const currentTodoHeight = () => split.querySelector(".todo-wrap")?.getBoundingClientRect().height || PROGRESS_SPLIT_MIN_TODO;
+
+  const stopDrag = () => {
+    handle.classList.remove("dragging");
+    document.body.classList.remove("progress-resizing");
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", stopDrag);
+  };
+
+  function onPointerMove(event) {
+    const delta = event.clientY - dragStartY;
+    applyProgressSplit(dragStartTodoHeight + delta, true);
+  }
+
+  handle.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    dragStartY = event.clientY;
+    dragStartTodoHeight = currentTodoHeight();
+    handle.classList.add("dragging");
+    document.body.classList.add("progress-resizing");
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopDrag);
+  });
+
+  handle.addEventListener("keydown", (event) => {
+    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const bounds = progressSplitBounds();
+    if (!bounds) return;
+    if (event.key === "Home") {
+      applyProgressSplit(PROGRESS_SPLIT_MIN_TODO, true);
+    } else if (event.key === "End") {
+      applyProgressSplit(bounds.maxTodo, true);
+    } else {
+      const delta = event.key === "ArrowUp" ? -24 : 24;
+      applyProgressSplit(currentTodoHeight() + delta, true);
+    }
+  });
+
+  restoreProgressSplit();
+  const resizeObserver = new ResizeObserver(() => {
+    restoreProgressSplit();
+    fitRouteDiagramToContainer();
+  });
+  resizeObserver.observe(split);
 }
 
 function escapeHtml(value) {
@@ -761,16 +874,7 @@ async function renderMermaidRouteDiagram(definition, version) {
     const diagram = els.routeList.querySelector(".route-diagram");
     if (diagram) {
       diagram.innerHTML = svg;
-      const renderedSvg = diagram.querySelector("svg");
-      if (renderedSvg) {
-        // Set to '100%' instead of removing to avoid WebKit/Safari console warnings about empty width/height
-        renderedSvg.setAttribute("width", "100%");
-        renderedSvg.setAttribute("height", "100%");
-        renderedSvg.style.maxWidth = "100%";
-        renderedSvg.style.maxHeight = "100%";
-        renderedSvg.style.width = "100%";
-        renderedSvg.style.height = "100%";
-      }
+      fitRouteDiagramToContainer();
       diagram.classList.remove("loading");
     }
   } catch (error) {
@@ -791,6 +895,7 @@ function renderRoutes(state) {
 
   // Skip rendering if the definition has not changed
   if (mermaidDefinition === lastRenderedDefinition) {
+    fitRouteDiagramToContainer();
     return;
   }
   lastRenderedDefinition = mermaidDefinition;
@@ -958,5 +1063,6 @@ els.eventList.addEventListener("click", (event) => {
   loadState();
 });
 
+initializeProgressSplitResizer();
 loadState();
 connectWs();
