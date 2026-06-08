@@ -31,6 +31,7 @@ class ToolExecutionState(TypedDict):
     last_error: NotRequired[str]
     failure_reason: NotRequired[str]
     fix_explanation: NotRequired[str]
+    required_action: NotRequired[dict[str, Any]]
 
 
 TOOLS_BY_NAME = {tool.name: tool for tool in AGENT_TOOLS}
@@ -118,6 +119,36 @@ def get_max_retries(tool_name: str) -> int:
     return 0
 
 
+def extract_missing_python_dependency(error_text: str) -> str | None:
+    """Extract a missing import/package name from Python traceback text."""
+    patterns = (
+        r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]",
+        r"ImportError: No module named ['\"]([^'\"]+)['\"]",
+        r"No module named ['\"]([^'\"]+)['\"]",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, error_text)
+        if match:
+            return match.group(1).split(".")[0]
+    return None
+
+
+def build_dependency_required_action(package_name: str | None) -> dict[str, Any]:
+    package = package_name or "<missing-package>"
+    return {
+        "type": "install_python_package",
+        "package": package,
+        "suggested_tool": "run_command",
+        "command": f"pip install {package}" if package_name else "pip install <missing-package>",
+        "requires_confirmation": True,
+        "requires_sandbox": True,
+    }
+
+
+def is_python_dependency_missing(error_text: str) -> bool:
+    return bool(extract_missing_python_dependency(error_text)) or "ModuleNotFoundError" in error_text
+
+
 def classify_tool_result(tool_name: str, result: str) -> tuple[str, str]:
     """Classify a tool result into a routing status and human-readable reason."""
     text = result or ""
@@ -125,16 +156,20 @@ def classify_tool_result(tool_name: str, result: str) -> tuple[str, str]:
 
     if tool_name == "run_python":
         if "代码报错:" in text or "traceback" in lower_text:
+            if is_python_dependency_missing(text):
+                package_name = extract_missing_python_dependency(text)
+                package_hint = f" {package_name}" if package_name else ""
+                return "needs_external_action", f"Python 缺少依赖{package_hint}，需要主图决定是否在隔离环境中安装。"
             retryable_python_markers = (
                 "SyntaxError",
                 "NameError",
                 "TypeError",
                 "ValueError",
-                "ImportError",
-                "ModuleNotFoundError",
             )
             if any(marker in text for marker in retryable_python_markers):
                 return "retryable_failure", "Python 代码错误，可尝试修复代码参数。"
+            if "ImportError" in text:
+                return "needs_external_action", "Python import 失败，可能需要主图确认依赖或环境动作。"
             return "retryable_failure", "Python 执行报错，可尝试修复代码参数。"
         return "success", ""
 
@@ -267,12 +302,18 @@ async def execute_node(state: ToolExecutionState, config: RunnableConfig) -> dic
         result = await tool.ainvoke(args, config=config)
         result_text = str(result)
         status, failure_reason = classify_tool_result(tool_name, result_text)
+        required_action = (
+            build_dependency_required_action(extract_missing_python_dependency(result_text))
+            if tool_name == "run_python" and status == "needs_external_action"
+            else None
+        )
         message_type = "tool_result" if status == "success" else "tool_error"
         return {
             "status": status,
             "last_result": result_text,
             "last_error": result_text if status != "success" else "",
             "failure_reason": failure_reason,
+            "required_action": required_action or {},
             "final_result": result_text,
             "internal_messages": _append_internal_message(
                 state,
@@ -283,6 +324,7 @@ async def execute_node(state: ToolExecutionState, config: RunnableConfig) -> dic
                     "args": args,
                     "status": status,
                     "failure_reason": failure_reason,
+                    "required_action": required_action or {},
                     "content": result_text,
                 },
             ),
@@ -290,10 +332,20 @@ async def execute_node(state: ToolExecutionState, config: RunnableConfig) -> dic
     except Exception as exc:
         error_text = f"工具执行异常: {exc}"
         logger.exception("工具执行子图捕获异常: %s", tool_name)
+        status, failure_reason = classify_tool_result(tool_name, error_text)
+        if status == "success":
+            status = "retryable_failure"
+            failure_reason = "工具执行抛出异常，可尝试修复参数。"
+        required_action = (
+            build_dependency_required_action(extract_missing_python_dependency(error_text))
+            if tool_name == "run_python" and status == "needs_external_action"
+            else None
+        )
         return {
-            "status": "retryable_failure",
+            "status": status,
             "last_error": error_text,
-            "failure_reason": "工具执行抛出异常，可尝试修复参数。",
+            "failure_reason": failure_reason,
+            "required_action": required_action or {},
             "final_result": error_text,
             "internal_messages": _append_internal_message(
                 state,
@@ -302,8 +354,9 @@ async def execute_node(state: ToolExecutionState, config: RunnableConfig) -> dic
                     "attempt": state.get("retry_count", 0),
                     "tool_name": tool_name,
                     "args": args,
-                    "status": "retryable_failure",
-                    "failure_reason": "工具执行抛出异常，可尝试修复参数。",
+                    "status": status,
+                    "failure_reason": failure_reason,
+                    "required_action": required_action or {},
                     "content": error_text,
                 },
             ),
@@ -435,7 +488,18 @@ async def fix_node(state: ToolExecutionState, config: RunnableConfig) -> dict[st
 async def finalize_node(state: ToolExecutionState) -> dict[str, Any]:
     """Normalize the result that will be exposed to the parent graph."""
     final_result = state.get("final_result") or state.get("last_result") or state.get("last_error") or ""
-    if state.get("status") not in {"success", "unknown_tool"} and state.get("retry_count", 0) >= state.get(
+    if state.get("status") == "needs_external_action":
+        required_action = state.get("required_action") or {}
+        action_text = json.dumps(required_action, ensure_ascii=False, default=str) if required_action else "{}"
+        final_result = (
+            "Python 执行失败：检测到缺失依赖或环境依赖问题。\n"
+            "该问题不能通过修改当前 run_python 参数安全解决，工具子图不会自动调用 run_command 安装依赖。\n"
+            "请由主图根据用户意图、安全策略和沙箱状态决定是否执行外部动作。\n"
+            f"失败原因: {state.get('failure_reason', '')}\n"
+            f"建议外部动作: {action_text}\n"
+            f"最后一次错误或结果:\n{state.get('last_error') or state.get('last_result') or final_result}"
+        )
+    elif state.get("status") not in {"success", "unknown_tool"} and state.get("retry_count", 0) >= state.get(
         "max_retries", get_max_retries(state.get("tool_name", ""))
     ):
         final_result = (
@@ -450,7 +514,7 @@ async def finalize_node(state: ToolExecutionState) -> dict[str, Any]:
 
 def route_after_execute(state: ToolExecutionState) -> str:
     status = state.get("status", "")
-    if status in {"success", "unknown_tool", "terminal_failure"}:
+    if status in {"success", "unknown_tool", "terminal_failure", "needs_external_action"}:
         return "finalize"
     if state.get("retry_count", 0) >= state.get("max_retries", get_max_retries(state.get("tool_name", ""))):
         return "finalize"

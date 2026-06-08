@@ -154,6 +154,9 @@ class ToolExecutionSubgraphTests(unittest.IsolatedAsyncioTestCase):
 
     def test_classifies_string_failures_from_existing_tools(self):
         self.assertEqual(classify_tool_result("run_python", "代码报错:\nTraceback\nNameError: x"), ("retryable_failure", "Python 代码错误，可尝试修复代码参数。"))
+        status, reason = classify_tool_result("run_python", "代码报错:\nTraceback\nModuleNotFoundError: No module named 'pandas'")
+        self.assertEqual(status, "needs_external_action")
+        self.assertIn("pandas", reason)
         self.assertEqual(classify_tool_result("search_web", "未找到相关结果。"), ("retryable_failure", "搜索无结果，可尝试改写查询。"))
         self.assertEqual(classify_tool_result("run_command", "命令执行成功 (无输出)。"), ("success", ""))
 
@@ -214,6 +217,52 @@ class ToolExecutionSubgraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool.calls, [{"code": "print(x)"}, {"code": "print(1)"}])
         self.assertEqual(result["final_result"], "修复成功")
         self.assertIn("internal_messages", result)
+
+    async def test_missing_python_dependency_exits_to_parent_without_fixing(self):
+        class MissingDependencyPythonTool:
+            name = "run_python"
+
+            def __init__(self):
+                self.calls = []
+
+            async def ainvoke(self, args, config=None):
+                self.calls.append(args)
+                return "代码报错:\nTraceback\nModuleNotFoundError: No module named 'pandas'"
+
+        class FailingLLM:
+            async def ainvoke(self, messages, config=None):
+                raise AssertionError("fix_node should not run for missing dependencies")
+
+        tool = MissingDependencyPythonTool()
+        with patch("app.nodes.tool_execution_subgraph.TOOLS_BY_NAME", {"run_python": tool}), patch(
+            "app.nodes.tool_execution_subgraph.llm_client", FailingLLM()
+        ):
+            result = await tool_execution_subgraph.ainvoke(
+                {
+                    "original_request": {
+                        "id": "call-1",
+                        "name": "run_python",
+                        "args": {"code": "import pandas as pd\nprint(pd.__version__)"},
+                    },
+                    "tool_call_id": "call-1",
+                    "tool_name": "run_python",
+                    "args": {"code": "import pandas as pd\nprint(pd.__version__)"},
+                    "session_id": "unit-test",
+                    "retry_count": 0,
+                    "max_retries": 3,
+                    "internal_messages": [],
+                    "status": "pending",
+                    "final_result": "",
+                }
+            )
+
+        self.assertEqual(len(tool.calls), 1)
+        self.assertEqual(result["status"], "needs_external_action")
+        self.assertEqual(result["retry_count"], 0)
+        self.assertEqual(result["required_action"]["suggested_tool"], "run_command")
+        self.assertIn("pip install pandas", result["required_action"]["command"])
+        self.assertIn("不会自动调用 run_command", result["final_result"])
+
 
     async def test_dangerous_command_fix_is_not_retried(self):
         class FailingCommandTool:
