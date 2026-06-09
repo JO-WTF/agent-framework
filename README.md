@@ -12,6 +12,7 @@
 - [路由与状态图设计说明](docs/modules/routing.md)
 - [Memory Manager 设计说明](docs/modules/memory-manager.md)
 - [Tools 与工具执行子图设计说明](docs/modules/tools.md)
+- [Skill Mechanism 技能机制设计说明](docs/modules/skills.md)
 - [Evaluator 设计说明](docs/modules/evaluator.md)
 - [入口、配置与运行期模块说明](docs/modules/runtime-and-entrypoints.md)
 - [开发者上手指南](docs/development.md)
