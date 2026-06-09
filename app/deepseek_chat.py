@@ -6,7 +6,7 @@ from typing import Any
 
 from langchain_openai import ChatOpenAI
 
-_REASONING_KEYS = ("reasoning_content", "reasoning", "thinking", "reasoning_delta")
+_REASONING_KEYS = ("reasoning", "reasoning_content", "thinking", "reasoning_delta")
 
 
 class ChatDeepSeekReasoning(ChatOpenAI):
@@ -33,8 +33,9 @@ class ChatDeepSeekReasoning(ChatOpenAI):
                     value = delta.get(key)
                     if value:
                         additional_kwargs[key] = value
-                        # Normalize the most common downstream key while keeping
+                        # Normalize common downstream keys while keeping
                         # provider-specific aliases available for debugging.
+                        additional_kwargs.setdefault("reasoning", value)
                         additional_kwargs.setdefault("reasoning_content", value)
         return generation_chunk
 

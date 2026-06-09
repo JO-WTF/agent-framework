@@ -6,9 +6,9 @@ from collections.abc import Mapping
 from typing import Any
 
 THINKING_KEYS = (
+    "reasoning",
     "reasoning_content",
     "thinking",
-    "reasoning",
     "reasoning_delta",
 )
 THINKING_BLOCK_TYPES = (
@@ -65,6 +65,18 @@ def _extract_from_mapping_or_object(obj: Any) -> str:
     return _first_text_value(obj, THINKING_KEYS)
 
 
+def _first_delta_from_chunk(chunk: Any) -> Any:
+    choices = _get_attr_or_key(chunk, "choices")
+    if not choices:
+        nested_chunk = _get_attr_or_key(chunk, "chunk")
+        choices = _get_attr_or_key(nested_chunk, "choices")
+    if not choices:
+        return None
+
+    first_choice = choices[0]
+    return _get_attr_or_key(first_choice, "delta")
+
+
 def _extract_thinking_from_content_blocks(content: Any) -> str:
     if not isinstance(content, list):
         return ""
@@ -102,12 +114,19 @@ def extract_thinking_and_content(chunk: Any) -> tuple[str, str]:
         return "", ""
 
     message_chunk = getattr(chunk, "message", chunk)
+    delta = _first_delta_from_chunk(chunk)
     raw_content = getattr(message_chunk, "content", None)
+    if raw_content is None and delta is not None:
+        raw_content = _get_attr_or_key(delta, "content")
+
+    delta_additional_kwargs = _get_attr_or_key(delta, "additional_kwargs", {}) or {}
     additional_kwargs = getattr(message_chunk, "additional_kwargs", {}) or {}
     response_metadata = getattr(message_chunk, "response_metadata", {}) or {}
 
     thinking = (
-        _extract_from_mapping_or_object(message_chunk)
+        _extract_from_mapping_or_object(delta)
+        or _extract_from_mapping_or_object(delta_additional_kwargs)
+        or _extract_from_mapping_or_object(message_chunk)
         or _extract_from_mapping_or_object(additional_kwargs)
         or _extract_from_mapping_or_object(response_metadata)
         or _extract_thinking_from_content_blocks(raw_content)
