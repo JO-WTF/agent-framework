@@ -23,6 +23,7 @@ class LLMLoggingTests(unittest.TestCase):
         self.assertIn("unit", logged)
         self.assertIn("用户问题", logged)
         self.assertEqual(logged.count("用户问题"), 1)
+        self.assertIn("\033[90m用户问题\033[0m", logged)
         self.assertIn("【System/Context Messages】", logged)
 
     def test_logs_thinking_and_response_without_think_tags(self):

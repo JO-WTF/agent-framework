@@ -12,6 +12,12 @@ from app.llm_streaming import extract_thinking_and_content
 from app.logging_config import logger
 
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+_GREY = "\033[90m"
+_RESET = "\033[0m"
+
+
+def _grey(text: str) -> str:
+    return f"{_GREY}{text}{_RESET}" if text else text
 
 
 def _message_role(message: Any) -> str:
@@ -84,8 +90,8 @@ def log_llm_request(node_name: str, messages: list[Any]) -> None:
         "\n%s\n📤 [LLM Request: %s]\n【User Prompt】\n%s\n\n【System/Context Messages】\n%s\n%s",
         "=" * 80,
         node_name,
-        _format_user_prompts(messages),
-        _format_non_user_messages(messages),
+        _grey(_format_user_prompts(messages)),
+        _grey(_format_non_user_messages(messages)),
         "=" * 80,
     )
 
