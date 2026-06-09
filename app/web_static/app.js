@@ -354,22 +354,27 @@ function renderModelOutput(content) {
     const body = segments.length
       ? segments.map((segment) => {
         const isThinking = segment.type === "thinking";
-        const label = isThinking ? "思考" : "回复";
-        const className = isThinking ? "model-output-segment thinking" : "model-output-segment reply";
+        const label = isThinking ? "[思考]" : "[回复]";
+        const className = isThinking ? "model-output-line thinking" : "model-output-line reply";
         return `
-          <section class="${className}">
-            <div class="model-output-segment-label">${label}</div>
-            <div class="model-output-segment-content">${escapeHtml(segment.text.trim())}</div>
-          </section>
+          <div class="${className}">
+            <span class="model-output-segment-label">${label}</span>
+            <span class="model-output-segment-content">${escapeHtml(segment.text.trim())}</span>
+          </div>
         `;
       }).join("")
-      : `<section class="model-output-segment reply"><div class="model-output-segment-content">${escapeHtml(round)}</div></section>`;
+      : `
+        <div class="model-output-line reply">
+          <span class="model-output-segment-label">[回复]</span>
+          <span class="model-output-segment-content">${escapeHtml(round)}</span>
+        </div>
+      `;
 
     return `
-      <article class="model-output-round">
-        <div class="model-output-round-header">第 ${index + 1} 轮模型输出</div>
+      <div class="model-output-round">
+        <div class="model-output-round-header">第 ${index + 1} 轮</div>
         <div class="model-output-round-body">${body}</div>
-      </article>
+      </div>
     `;
   }).join("");
 }
