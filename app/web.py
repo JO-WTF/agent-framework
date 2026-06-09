@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel
 
 from app.cli import build_agent_graph
+from app.config import get_llm_settings, update_llm_settings
 from app.llm_streaming import extract_thinking_and_content
 from app.memory.store import append_session_event, trim_messages
 from app.runtime_paths import STATIC_DIR
@@ -26,6 +27,14 @@ class ChatRequest(BaseModel):
 
 class ApprovalDecisionRequest(BaseModel):
     approval_id: str
+
+
+class ModelConfigRequest(BaseModel):
+    provider: str
+    model_name: str
+    base_url: str | None = None
+    api_key: str | None = None
+    temperature: float | None = None
 
 
 def parse_thinking_content(content: str) -> tuple[str, str]:
@@ -506,6 +515,29 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
 @app.get("/")
 async def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/api/model-config")
+async def get_model_config():
+    return get_llm_settings()
+
+
+@app.post("/api/model-config")
+async def set_model_config(payload: ModelConfigRequest):
+    running_sessions = [
+        session_id
+        for session_id, session in manager.sessions.items()
+        if session.running_task and not session.running_task.done()
+    ]
+    if running_sessions:
+        raise HTTPException(status_code=409, detail="agent is running; stop or wait before changing model config")
+
+    try:
+        settings = update_llm_settings(payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"status": "updated", "model_config": settings}
 
 
 @app.get("/api/state")

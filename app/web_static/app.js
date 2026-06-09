@@ -5,6 +5,14 @@ const els = {
   stopBtn: document.getElementById("stopBtn"),
   newSessionBtn: document.getElementById("newSessionBtn"),
   clearBtn: document.getElementById("clearBtn"),
+  modelConfigForm: document.getElementById("modelConfigForm"),
+  modelProviderSelect: document.getElementById("modelProviderSelect"),
+  modelPresetSelect: document.getElementById("modelPresetSelect"),
+  modelNameInput: document.getElementById("modelNameInput"),
+  modelBaseUrlInput: document.getElementById("modelBaseUrlInput"),
+  modelApiKeyInput: document.getElementById("modelApiKeyInput"),
+  saveModelConfigBtn: document.getElementById("saveModelConfigBtn"),
+  modelConfigStatus: document.getElementById("modelConfigStatus"),
   chatForm: document.getElementById("chatForm"),
   messageInput: document.getElementById("messageInput"),
   sendBtn: document.getElementById("sendBtn"),
@@ -25,6 +33,20 @@ const PROGRESS_SPLIT_STORAGE_KEY = "agent_progress_split_todo_px";
 const PROGRESS_SPLIT_HANDLE_HEIGHT = 10;
 const PROGRESS_SPLIT_MIN_TODO = 120;
 const PROGRESS_SPLIT_MIN_ROUTE = 160;
+const MODEL_PRESETS = {
+  openai: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
+  deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  ollama: ["qwen3", "deepseek-r1", "llama3.1"],
+  llamacpp: ["local-model"],
+  custom: ["custom-model"],
+};
+const PROVIDER_DEFAULT_BASE_URLS = {
+  openai: "",
+  deepseek: "https://api.deepseek.com/v1",
+  ollama: "http://localhost:11434/v1",
+  llamacpp: "http://localhost:8080/v1",
+  custom: "",
+};
 
 function getSessionId() {
   let id = localStorage.getItem(SESSION_STORAGE_KEY);
@@ -940,6 +962,106 @@ async function renderMermaidRouteDiagram(definition, version) {
   }
 }
 
+
+function setModelConfigStatus(text, kind = "neutral") {
+  if (!els.modelConfigStatus) return;
+  els.modelConfigStatus.textContent = text;
+  els.modelConfigStatus.dataset.kind = kind;
+}
+
+function providerLabel(provider) {
+  const labels = {
+    openai: "OpenAI",
+    deepseek: "DeepSeek",
+    ollama: "Ollama",
+    llamacpp: "llama.cpp",
+    custom: "Custom",
+  };
+  return labels[provider] || provider || "-";
+}
+
+function populateModelPresets(provider, selectedModel = "") {
+  if (!els.modelPresetSelect) return;
+  const presets = MODEL_PRESETS[provider] || [];
+  const options = [...presets];
+  if (selectedModel && !options.includes(selectedModel)) {
+    options.unshift(selectedModel);
+  }
+  els.modelPresetSelect.innerHTML = options
+    .map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`)
+    .join("") + `<option value="__custom__">自定义...</option>`;
+  els.modelPresetSelect.value = selectedModel && options.includes(selectedModel) ? selectedModel : (options[0] || "__custom__");
+}
+
+function applyModelConfig(config) {
+  if (!els.modelConfigForm || !config) return;
+  const provider = config.provider || "openai";
+  const modelName = config.model_name || "";
+  const defaultBaseUrls = config.default_base_urls || PROVIDER_DEFAULT_BASE_URLS;
+  Object.assign(PROVIDER_DEFAULT_BASE_URLS, defaultBaseUrls);
+
+  els.modelProviderSelect.value = provider;
+  populateModelPresets(provider, modelName);
+  els.modelNameInput.value = modelName;
+  els.modelBaseUrlInput.value = config.base_url || PROVIDER_DEFAULT_BASE_URLS[provider] || "";
+  els.modelApiKeyInput.value = "";
+  els.modelApiKeyInput.placeholder = config.api_key_set ? "已配置，留空清除/使用默认" : "可选，留空使用默认";
+  setModelConfigStatus(`${providerLabel(provider)} / ${modelName || "未设置"}`, "success");
+}
+
+async function loadModelConfig() {
+  if (!els.modelConfigForm) return;
+  setModelConfigStatus("加载中...", "neutral");
+  try {
+    const response = await fetch("/api/model-config", { headers: sessionHeaders() });
+    const config = await response.json();
+    if (!response.ok) {
+      setModelConfigStatus(config.detail || "加载失败", "error");
+      return;
+    }
+    applyModelConfig(config);
+  } catch (error) {
+    setModelConfigStatus(`加载失败：${error.message}`, "error");
+  }
+}
+
+async function saveModelConfig() {
+  if (!els.modelConfigForm) return;
+  const provider = els.modelProviderSelect.value;
+  const payload = {
+    provider,
+    model_name: els.modelNameInput.value.trim(),
+    base_url: els.modelBaseUrlInput.value.trim(),
+    api_key: els.modelApiKeyInput.value,
+  };
+  if (!payload.model_name) {
+    setModelConfigStatus("模型名称必填", "error");
+    els.modelNameInput.focus();
+    return;
+  }
+
+  els.saveModelConfigBtn.disabled = true;
+  setModelConfigStatus("保存中...", "neutral");
+  try {
+    const response = await fetch("/api/model-config", {
+      method: "POST",
+      headers: sessionHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setModelConfigStatus(result.detail || "保存失败", "error");
+      return;
+    }
+    applyModelConfig(result.model_config);
+    setModelConfigStatus("已保存", "success");
+  } catch (error) {
+    setModelConfigStatus(`保存失败：${error.message}`, "error");
+  } finally {
+    els.saveModelConfigBtn.disabled = currentState.status === "running" || currentState.status === "awaiting_approval";
+  }
+}
+
 function renderRoutes(state) {
   const active = state.current_node || "";
   const visited = collectVisitedRoutes(state);
@@ -974,6 +1096,9 @@ function renderState(state) {
   els.stopBtn.disabled = status !== "running";
   els.sendBtn.disabled = status === "running" || status === "awaiting_approval";
   els.messageInput.disabled = status === "running" || status === "awaiting_approval";
+  if (els.saveModelConfigBtn) {
+    els.saveModelConfigBtn.disabled = status === "running" || status === "awaiting_approval";
+  }
   els.modelOutput.textContent = state.model_output || "等待模型输出...";
 
   renderMessages(state.messages || []);
@@ -1097,6 +1222,43 @@ els.chatForm.addEventListener("submit", async (event) => {
   }
 });
 
+if (els.modelProviderSelect) {
+  els.modelProviderSelect.addEventListener("change", () => {
+    const provider = els.modelProviderSelect.value;
+    const presets = MODEL_PRESETS[provider] || [];
+    const nextModel = presets[0] || "";
+    populateModelPresets(provider, nextModel);
+    els.modelNameInput.value = nextModel;
+    els.modelBaseUrlInput.value = PROVIDER_DEFAULT_BASE_URLS[provider] || "";
+  });
+}
+
+if (els.modelPresetSelect) {
+  els.modelPresetSelect.addEventListener("change", () => {
+    if (els.modelPresetSelect.value === "__custom__") {
+      els.modelNameInput.focus();
+      els.modelNameInput.select();
+      return;
+    }
+    els.modelNameInput.value = els.modelPresetSelect.value;
+  });
+}
+
+if (els.modelNameInput) {
+  els.modelNameInput.addEventListener("input", () => {
+    const modelName = els.modelNameInput.value.trim();
+    const values = Array.from(els.modelPresetSelect.options).map((option) => option.value);
+    els.modelPresetSelect.value = values.includes(modelName) ? modelName : "__custom__";
+  });
+}
+
+if (els.modelConfigForm) {
+  els.modelConfigForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await saveModelConfig();
+  });
+}
+
 els.messageInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
     return;
@@ -1154,5 +1316,6 @@ els.eventList.addEventListener("click", (event) => {
 });
 
 initializeProgressSplitResizer();
+loadModelConfig();
 loadState();
 connectWs();
