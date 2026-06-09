@@ -345,10 +345,12 @@ function renderModelOutput(content) {
     return "";
   }
 
-  return segments.map((segment) => {
+  return segments.map((segment, index) => {
     const text = escapeHtml(segment.text);
     if (segment.type === "thinking") {
-      return `<span class="model-output-thinking">${text}</span>`;
+      const nextSegment = segments[index + 1];
+      const separator = nextSegment?.type === "content" && !nextSegment.text.startsWith("\n") ? "\n" : "";
+      return `<span class="model-output-thinking">${text}</span>${separator}`;
     }
     return text;
   }).join("");
