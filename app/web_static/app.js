@@ -502,7 +502,7 @@ function renderEventDetail(event) {
           <div class="detail-label">📥 发送的 Message (Prompts)</div>
           <div class="orchestrator-prompts">
             ${prompt.map((p) => `
-              <details class="orchestrator-prompt-details" open>
+              <details class="orchestrator-prompt-details">
                 <summary class="orchestrator-prompt-summary">
                   <span class="badge neutral">${escapeHtml(p.role || 'prompt')}</span>
                   <span class="prompt-summary-text">提示词 / 对话上下文</span>
@@ -580,7 +580,7 @@ function renderEventDetail(event) {
             <div class="detail-label">📥 发送的 Message (Prompts)</div>
             <div class="orchestrator-prompts">
               ${prompt.map((p) => `
-                <details class="orchestrator-prompt-details" ${p.role === 'user' ? 'open' : ''}>
+                <details class="orchestrator-prompt-details">
                   <summary class="orchestrator-prompt-summary">
                     <span class="badge neutral">${escapeHtml(p.role)}</span>
                     <span class="prompt-summary-text">${escapeHtml(p.role === 'system' ? '系统提示词' : '运行状态与历史上下文')}</span>
@@ -635,7 +635,7 @@ function renderEventDetail(event) {
                 <div class="detail-label">📥 发送的 Message (Prompts)</div>
                 <div class="orchestrator-prompts">
                   ${prompt.map((p) => `
-                    <details class="orchestrator-prompt-details" open>
+                    <details class="orchestrator-prompt-details">
                       <summary class="orchestrator-prompt-summary">
                         <span class="badge neutral">${escapeHtml(p.role || 'prompt')}</span>
                         <span class="prompt-summary-text">提示词 / 对话上下文</span>
