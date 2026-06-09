@@ -28,6 +28,16 @@ class ModelConfigTests(unittest.TestCase):
         self.assertEqual(settings["base_url"], "https://api.deepseek.com/v1")
         self.assertEqual(settings["api_key"], "secret-token")
 
+
+    def test_provider_defaults_include_requested_models_and_urls(self):
+        settings = config.normalize_llm_settings({"provider": "deepseek", "base_url": ""})
+        self.assertEqual(settings["model_name"], "deepseek-v4-flash")
+        self.assertEqual(settings["base_url"], "https://api.deepseek.com/v1")
+
+        settings = config.normalize_llm_settings({"provider": "llamacpp", "base_url": ""})
+        self.assertEqual(settings["model_name"], "qwen3.6:latest")
+        self.assertEqual(settings["base_url"], "http://isc.ai.huawei.com:11434/v1")
+
     def test_redact_llm_settings_does_not_return_api_key(self):
         redacted = config.redact_llm_settings(
             {
@@ -61,6 +71,9 @@ class ModelConfigTests(unittest.TestCase):
         payload = response.json()
         self.assertIn("model_name", payload)
         self.assertNotIn("api_key", payload)
+        self.assertEqual(payload["default_model_names"]["deepseek"], "deepseek-v4-flash")
+        self.assertEqual(payload["default_model_names"]["llamacpp"], "qwen3.6:latest")
+        self.assertEqual(payload["default_base_urls"]["llamacpp"], "http://isc.ai.huawei.com:11434/v1")
 
     def test_model_config_endpoint_does_not_accept_server_writes(self):
         client = TestClient(app)

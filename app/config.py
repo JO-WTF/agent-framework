@@ -38,7 +38,13 @@ DEFAULT_PROVIDER_BASE_URLS = {
     "openai": "",
     "deepseek": "https://api.deepseek.com/v1",
     "ollama": "http://localhost:11434/v1",
-    "llamacpp": "http://localhost:8080/v1",
+    "llamacpp": "http://isc.ai.huawei.com:11434/v1",
+}
+DEFAULT_PROVIDER_MODEL_NAMES = {
+    "openai": "gpt-4o-mini",
+    "deepseek": "deepseek-v4-flash",
+    "ollama": "qwen3",
+    "llamacpp": "qwen3.6:latest",
 }
 _PROVIDER_API_KEY_ENVS = {
     "openai": "OPENAI_API_KEY",
@@ -55,13 +61,17 @@ def _default_base_url(provider: str) -> str:
     return DEFAULT_PROVIDER_BASE_URLS.get(provider, "")
 
 
+def _default_model_name(provider: str) -> str:
+    return DEFAULT_PROVIDER_MODEL_NAMES.get(provider, "")
+
+
 def _server_llm_settings() -> dict[str, Any]:
     provider = os.getenv("LLM_PROVIDER", "openai").lower()
     if provider not in _SUPPORTED_PROVIDERS:
         provider = "custom"
     return {
         "provider": provider,
-        "model_name": os.getenv("LLM_MODEL_NAME") or "",
+        "model_name": os.getenv("LLM_MODEL_NAME") or _default_model_name(provider),
         "api_key": os.getenv("LLM_API_KEY") or "",
         "base_url": os.getenv("LLM_BASE_URL") or _default_base_url(provider),
         "temperature": float(os.getenv("LLM_TEMPERATURE", "0.1")),
@@ -93,7 +103,14 @@ def normalize_llm_settings(payload: dict[str, Any] | None = None) -> dict[str, A
     if provider not in _SUPPORTED_PROVIDERS:
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
-    model_name = str(payload.get("model_name", current.get("model_name", ""))).strip()
+    current_provider = str(current.get("provider") or "openai")
+    if "model_name" in payload:
+        model_name_value = payload.get("model_name")
+    elif provider != current_provider:
+        model_name_value = _default_model_name(provider)
+    else:
+        model_name_value = current.get("model_name") or _default_model_name(provider)
+    model_name = str(model_name_value or "").strip()
     if not model_name:
         raise ValueError("model_name is required")
 
@@ -125,6 +142,7 @@ def redact_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
     redacted["api_key_set"] = _has_configured_api_key(settings)
     redacted["providers"] = list(_SUPPORTED_PROVIDERS)
     redacted["default_base_urls"] = dict(DEFAULT_PROVIDER_BASE_URLS)
+    redacted["default_model_names"] = dict(DEFAULT_PROVIDER_MODEL_NAMES)
     return redacted
 
 

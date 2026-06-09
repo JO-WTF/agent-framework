@@ -37,17 +37,24 @@ const PROGRESS_SPLIT_MIN_TODO = 120;
 const PROGRESS_SPLIT_MIN_ROUTE = 160;
 const MODEL_PRESETS = {
   openai: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
-  deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  deepseek: ["deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
   ollama: ["qwen3", "deepseek-r1", "llama3.1"],
-  llamacpp: ["local-model"],
+  llamacpp: ["qwen3.6:latest"],
   custom: ["custom-model"],
 };
 const PROVIDER_DEFAULT_BASE_URLS = {
   openai: "",
   deepseek: "https://api.deepseek.com/v1",
   ollama: "http://localhost:11434/v1",
-  llamacpp: "http://localhost:8080/v1",
+  llamacpp: "http://isc.ai.huawei.com:11434/v1",
   custom: "",
+};
+const PROVIDER_DEFAULT_MODEL_NAMES = {
+  openai: "gpt-4o-mini",
+  deepseek: "deepseek-v4-flash",
+  ollama: "qwen3",
+  llamacpp: "qwen3.6:latest",
+  custom: "custom-model",
 };
 
 function getSessionId() {
@@ -1035,7 +1042,9 @@ function applyModelConfig(config, source = "server") {
   const provider = config.provider || "openai";
   const modelName = config.model_name || "";
   const defaultBaseUrls = config.default_base_urls || PROVIDER_DEFAULT_BASE_URLS;
+  const defaultModelNames = config.default_model_names || PROVIDER_DEFAULT_MODEL_NAMES;
   Object.assign(PROVIDER_DEFAULT_BASE_URLS, defaultBaseUrls);
+  Object.assign(PROVIDER_DEFAULT_MODEL_NAMES, defaultModelNames);
 
   activeModelConfig = { ...config, source };
   els.modelProviderSelect.value = provider;
@@ -1264,7 +1273,7 @@ if (els.modelProviderSelect) {
   els.modelProviderSelect.addEventListener("change", () => {
     const provider = els.modelProviderSelect.value;
     const presets = modelPresetsFor(provider);
-    const nextModel = presets[0] || "";
+    const nextModel = PROVIDER_DEFAULT_MODEL_NAMES[provider] || presets[0] || "";
     populateModelPresets(provider, nextModel);
     els.modelNameInput.value = nextModel;
     els.modelBaseUrlInput.value = PROVIDER_DEFAULT_BASE_URLS[provider] || "";

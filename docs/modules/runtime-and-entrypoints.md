@@ -78,9 +78,9 @@ Web 层设计目标是可观察性。它不改变 Agent 决策，只把节点更
 | Provider | 行为 |
 | --- | --- |
 | `openai` | 使用 `OPENAI_API_KEY` 或 `LLM_API_KEY`，可选 `LLM_BASE_URL`。 |
-| `deepseek` | 默认 `https://api.deepseek.com/v1`。 |
+| `deepseek` | 默认 `https://api.deepseek.com/v1`，默认模型 `deepseek-v4-flash`。 |
 | `ollama` | 默认 `http://localhost:11434/v1`。 |
-| `llamacpp` | 默认 `http://localhost:8080/v1`。 |
+| `llamacpp` | 默认 `http://isc.ai.huawei.com:11434/v1`，默认模型 `qwen3.6:latest`。 |
 | 其他 | 作为 OpenAI-compatible 服务处理。 |
 
 关键环境变量：
