@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.runtime_paths import GLOBAL_DATA_DIR, ROOT_DIR, ensure_runtime_dirs, get_session_file_path
 
-STATIC_GUIDELINES_FILE = ROOT_DIR / "CLAUDE.md"
+STATIC_GUIDELINES_FILE = ROOT_DIR / "STATIC_GUIDELINES.md"
 GLOBAL_AGENT_MEMORY_FILE = GLOBAL_DATA_DIR / "agent_memory.json"
 
 DEFAULT_MESSAGE_WINDOW = 8

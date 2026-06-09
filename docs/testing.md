@@ -58,7 +58,7 @@
 
 覆盖：
 
-- `CLAUDE.md` 静态规则按 `context_tags` 筛选。
+- `STATIC_GUIDELINES.md` 静态规则按 `context_tags` 筛选。
 - Agent Notes 按标签筛选。
 - `get_system_prompt()` 会注入动态标签、规则和笔记。
 - 可从消息内容启发式推断标签。
