@@ -33,19 +33,39 @@ class ApprovalDecisionRequest(BaseModel):
     approval_id: str
 
 
+_THINK_BLOCK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
+_OPEN_THINK_RE = re.compile(r"<think>(.*)$", re.DOTALL | re.IGNORECASE)
+
+
 def parse_thinking_content(content: str) -> tuple[str, str]:
-    think = ""
-    message = content
-    think_start = content.find("<think>")
-    if think_start != -1:
-        think_end = content.find("</think>", think_start + 7)
-        if think_end != -1:
-            think = content[think_start + 7 : think_end].strip()
-            message = (content[:think_start] + content[think_end + 8 :]).strip()
-        else:
-            think = content[think_start + 7 :].strip()
-            message = content[:think_start].strip()
-    return think, message
+    """Split server-provided ``<think>`` blocks from final message text.
+
+    Some OpenAI-compatible providers stream reasoning as normal content wrapped
+    with ``<think>...</think>`` instead of metadata fields. During streaming the
+    closing tag may not have arrived yet, so this parser also treats a trailing
+    open ``<think>`` block as in-progress thinking rather than user-visible text.
+    """
+    if not content:
+        return "", ""
+
+    thinking_parts: list[str] = []
+    message_parts: list[str] = []
+    cursor = 0
+
+    for match in _THINK_BLOCK_RE.finditer(content):
+        message_parts.append(content[cursor : match.start()])
+        thinking_parts.append(match.group(1))
+        cursor = match.end()
+
+    remainder = content[cursor:]
+    open_match = _OPEN_THINK_RE.search(remainder)
+    if open_match:
+        message_parts.append(remainder[: open_match.start()])
+        thinking_parts.append(open_match.group(1))
+    else:
+        message_parts.append(remainder)
+
+    return "".join(thinking_parts).strip(), "".join(message_parts).strip()
 
 
 class ConsoleSession:
@@ -132,14 +152,9 @@ class ConsoleSession:
             llm_run["content"] = content
             llm_run["token_count"] = llm_run.get("token_count", 0) + 1
 
-            if token_type == "thinking":
-                llm_run["think"] = f"{llm_run.get('think', '')}{token}"
-            elif llm_run.get("think"):
-                llm_run["message"] = f"{llm_run.get('message', '')}{token}"
-            else:
-                think, message = parse_thinking_content(content)
-                llm_run["think"] = think
-                llm_run["message"] = message
+            think, message = parse_thinking_content(content)
+            llm_run["think"] = think
+            llm_run["message"] = message
 
             last_event["title"] = f"节点更新: agent (正在调用模型, {llm_run['token_count']} tokens)"
             last_event["updated_at"] = now

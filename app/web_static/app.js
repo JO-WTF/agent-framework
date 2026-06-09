@@ -276,21 +276,31 @@ function setBadge(el, text, className) {
 }
 
 function parseThinkingContent(content) {
-  let think = "";
-  let message = content;
+  const thinkingParts = [];
+  const messageParts = [];
+  const blockRe = /<think>([\s\S]*?)<\/think>/gi;
+  let cursor = 0;
+  let match;
 
-  const thinkStart = content.indexOf("<think>");
-  if (thinkStart !== -1) {
-    const thinkEnd = content.indexOf("</think>", thinkStart + 7);
-    if (thinkEnd !== -1) {
-      think = content.substring(thinkStart + 7, thinkEnd).trim();
-      message = (content.substring(0, thinkStart) + content.substring(thinkEnd + 8)).trim();
-    } else {
-      think = content.substring(thinkStart + 7).trim();
-      message = content.substring(0, thinkStart).trim();
-    }
+  while ((match = blockRe.exec(content)) !== null) {
+    messageParts.push(content.substring(cursor, match.index));
+    thinkingParts.push(match[1]);
+    cursor = blockRe.lastIndex;
   }
-  return { think, message };
+
+  const remainder = content.substring(cursor);
+  const openMatch = /<think>([\s\S]*)$/i.exec(remainder);
+  if (openMatch) {
+    messageParts.push(remainder.substring(0, openMatch.index));
+    thinkingParts.push(openMatch[1]);
+  } else {
+    messageParts.push(remainder);
+  }
+
+  return {
+    think: thinkingParts.join("").trim(),
+    message: messageParts.join("").trim(),
+  };
 }
 
 function renderAssistantMarkdown(content) {
