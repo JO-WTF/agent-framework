@@ -303,6 +303,58 @@ function parseThinkingContent(content) {
   };
 }
 
+function splitThinkingSegments(content) {
+  const segments = [];
+  const blockRe = /<think>([\s\S]*?)<\/think>/gi;
+  let cursor = 0;
+  let match;
+
+  while ((match = blockRe.exec(content)) !== null) {
+    if (match.index > cursor) {
+      segments.push({ type: "content", text: content.substring(cursor, match.index) });
+    }
+    if (match[1]) {
+      segments.push({ type: "thinking", text: match[1] });
+    }
+    cursor = blockRe.lastIndex;
+  }
+
+  const remainder = content.substring(cursor);
+  const openMatch = /<think>([\s\S]*)$/i.exec(remainder);
+  if (openMatch) {
+    if (openMatch.index > 0) {
+      segments.push({ type: "content", text: remainder.substring(0, openMatch.index) });
+    }
+    if (openMatch[1]) {
+      segments.push({ type: "thinking", text: openMatch[1] });
+    }
+  } else if (remainder) {
+    segments.push({ type: "content", text: remainder });
+  }
+
+  return segments;
+}
+
+function renderModelOutput(content) {
+  if (!content) {
+    return escapeHtml("等待模型输出...");
+  }
+
+  const segments = splitThinkingSegments(content);
+  if (!segments.length) {
+    return "";
+  }
+
+  return segments.map((segment) => {
+    const text = escapeHtml(segment.text);
+    if (segment.type === "thinking") {
+      return `<span class="model-output-thinking">${text}</span>`;
+    }
+    return text;
+  }).join("");
+}
+
+
 function renderAssistantMarkdown(content) {
   if (!window.marked || !window.DOMPurify) {
     return escapeHtml(content);
@@ -1156,7 +1208,7 @@ function renderState(state) {
   if (els.saveModelConfigBtn) {
     els.saveModelConfigBtn.disabled = status === "running" || status === "awaiting_approval";
   }
-  els.modelOutput.textContent = state.model_output || "等待模型输出...";
+  els.modelOutput.innerHTML = renderModelOutput(state.model_output || "");
 
   renderMessages(state.messages || []);
   renderEvents(state.events || []);

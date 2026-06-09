@@ -564,6 +564,10 @@ textarea {
   white-space: pre-wrap;
 }
 
+.model-output-thinking {
+  color: #8a94a6;
+}
+
 .timeline-wrap {
   flex: 1;
   min-height: 0;
