@@ -7,6 +7,7 @@ from typing_extensions import NotRequired, TypedDict
 from dotenv import load_dotenv
 from tavily import TavilyClient
 from langchain_openai import ChatOpenAI
+from app.deepseek_chat import ChatDeepSeekReasoning
 from langchain_core.callbacks import AsyncCallbackHandler
 from langgraph.graph.message import add_messages
 from app.runtime_paths import CONFIG_DIR
@@ -167,7 +168,8 @@ def _build_chat_openai(settings: dict[str, Any]) -> ChatOpenAI:
     }
     if base_url:
         client_kwargs["base_url"] = base_url
-    return ChatOpenAI(**client_kwargs)
+    client_cls = ChatDeepSeekReasoning if settings.get("provider") == "deepseek" else ChatOpenAI
+    return client_cls(**client_kwargs)
 
 
 def get_llm_client(settings: dict[str, Any] | None = None) -> ChatOpenAI:
