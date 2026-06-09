@@ -36,6 +36,8 @@ body {
 }
 
 button,
+input,
+select,
 textarea {
   font: inherit;
 }
@@ -48,8 +50,8 @@ textarea {
 }
 
 .topbar {
-  height: 76px;
-  padding: 16px 22px;
+  min-height: 76px;
+  padding: 12px 22px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -75,11 +77,62 @@ textarea {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.model-config-form {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.model-config-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 104px;
+}
+
+.model-config-form label span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.model-config-form select,
+.model-config-form input {
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 9px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.model-config-form .model-name-field {
+  min-width: 150px;
+}
+
+.model-config-form .model-name-field.hidden {
+  display: none;
+}
+
+.model-config-form .base-url-field {
+  min-width: 210px;
+}
+
+.model-config-form .token-field {
+  min-width: 160px;
 }
 
 .workspace {
   flex: 1;
-  height: calc(100vh - 76px);
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(280px, 0.9fr) minmax(420px, 1.35fr) minmax(320px, 0.95fr);
@@ -113,6 +166,15 @@ textarea {
   font-size: 15px;
   line-height: 1.2;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-config-badge {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .badge {
@@ -499,6 +561,65 @@ textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   line-height: 1.55;
+}
+
+.model-output-empty {
+  color: var(--muted);
+}
+
+.model-output-round {
+  margin: 0;
+  padding: 0;
+}
+
+.model-output-round + .model-output-round {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #d9e1ef;
+}
+
+.model-output-round-header {
+  margin-bottom: 4px;
+  color: #667085;
+  font-family: var(--font-sans, Inter, system-ui, sans-serif);
+  font-size: 11px;
+  font-weight: 780;
+}
+
+.model-output-round-body {
+  display: grid;
+  gap: 3px;
+}
+
+.model-output-line {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 6px;
+  align-items: baseline;
+}
+
+.model-output-line.thinking {
+  color: #8a94a6;
+}
+
+.model-output-line.reply {
+  color: #233047;
+}
+
+.model-output-segment-label {
+  color: #667085;
+  font-family: var(--font-sans, Inter, system-ui, sans-serif);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.model-output-line.reply .model-output-segment-label {
+  color: #1d4ed8;
+}
+
+.model-output-segment-content {
+  min-width: 0;
   white-space: pre-wrap;
 }
 
@@ -879,6 +1000,16 @@ body.progress-resizing {
   font-size: 12px;
 }
 
+.route-diagram .nodeLabel,
+.route-diagram text {
+  font-size: 10px !important;
+}
+
+.route-diagram .edgeLabel,
+.route-diagram .edgeLabel span {
+  font-size: 9px !important;
+}
+
 .route-diagram svg {
   width: 100%;
   height: 100%;
@@ -1034,3 +1165,31 @@ body.progress-resizing {
 }
 
 
+
+@media (max-width: 1280px) {
+  .model-config-form {
+    order: 3;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .topbar {
+    align-items: flex-start;
+  }
+}
+
+@keyframes border-flash {
+  0%, 100% {
+    stroke-opacity: 1;
+  }
+  50% {
+    stroke-opacity: 0.15;
+  }
+}
+
+.route-diagram svg .llmCallActive rect,
+.route-diagram svg .llmCallActive polygon,
+.route-diagram svg .llmCallActive circle,
+.route-diagram svg .llmCallActive path {
+  animation: border-flash 0.3s infinite;
+}

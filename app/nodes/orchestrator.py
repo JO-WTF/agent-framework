@@ -5,6 +5,7 @@ from langchain_core.runnables.config import RunnableConfig
 
 from app.config import AgentState, llm_client
 from app.logging_config import logger
+from app.llm_logging import log_llm_request, log_llm_response
 from app.memory.store import normalize_context_tags, trim_messages
 from app.nodes.common import (
     default_orchestrator_next,
@@ -29,16 +30,31 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
 
     user_prompt = (
         f"当前任务复杂度: {state.get('task_complexity', 'unknown')}\n\n"
-        f"当前上下文标签: {', '.join(initial_context_tags)}\n"
         f"可选上下文标签: {format_available_context_tags()}\n\n"
         f"当前 todo_list JSON:\n{current_todo_json}\n\n"
         f"最近消息:\n{recent_messages}"
     )
 
-    response = await llm_client.ainvoke([
+    llm_messages = [
         SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt)
-    ], silent_config(config))
+        HumanMessage(content=user_prompt),
+    ]
+    log_llm_request("orchestrator", llm_messages)
+    
+    session = None
+    if session_id:
+        from app.web import manager
+        session = manager.sessions.get(session_id)
+        if session:
+            await session.set_llm_active("orchestrator")
+            
+    try:
+        response = await llm_client.ainvoke(llm_messages, silent_config(config))
+    finally:
+        if session:
+            await session.set_llm_active(None)
+
+    log_llm_response("orchestrator", response)
 
     import re
 

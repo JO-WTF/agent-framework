@@ -45,7 +45,7 @@ response = await llm_with_tools.ainvoke(messages, config)
 关键输入包括：
 
 - `agent_brain` 提示词：定义 Brain 的行动准则。
-- `context_tags`：让 `get_system_prompt()` 按需加载 `CLAUDE.md` 静态规则和 Agent Notes。
+- `context_tags`：让 `get_system_prompt()` 按需加载 `STATIC_GUIDELINES.md` 静态规则和 Agent Notes。
 - `todo_list`：告诉 Brain 当前任务计划和进度。
 - `world_state`：告诉 Brain 已确认事实、工具摘要和最终答复摘要。
 - `trim_messages()` 后的消息窗口：保留必要近因上下文，避免无限增长。

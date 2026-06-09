@@ -5,6 +5,15 @@ const els = {
   stopBtn: document.getElementById("stopBtn"),
   newSessionBtn: document.getElementById("newSessionBtn"),
   clearBtn: document.getElementById("clearBtn"),
+  modelConfigForm: document.getElementById("modelConfigForm"),
+  modelProviderSelect: document.getElementById("modelProviderSelect"),
+  modelPresetSelect: document.getElementById("modelPresetSelect"),
+  modelNameField: document.getElementById("modelNameField"),
+  modelNameInput: document.getElementById("modelNameInput"),
+  modelBaseUrlInput: document.getElementById("modelBaseUrlInput"),
+  modelApiKeyInput: document.getElementById("modelApiKeyInput"),
+  saveModelConfigBtn: document.getElementById("saveModelConfigBtn"),
+  modelConfigBadge: document.getElementById("modelConfigBadge"),
   chatForm: document.getElementById("chatForm"),
   messageInput: document.getElementById("messageInput"),
   sendBtn: document.getElementById("sendBtn"),
@@ -21,10 +30,32 @@ const els = {
 };
 
 const SESSION_STORAGE_KEY = "agent_session_id";
+const MODEL_CONFIG_STORAGE_KEY = "agent_model_config";
 const PROGRESS_SPLIT_STORAGE_KEY = "agent_progress_split_todo_px";
 const PROGRESS_SPLIT_HANDLE_HEIGHT = 10;
 const PROGRESS_SPLIT_MIN_TODO = 120;
 const PROGRESS_SPLIT_MIN_ROUTE = 160;
+const MODEL_PRESETS = {
+  openai: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
+  deepseek: ["deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
+  ollama: ["qwen3", "deepseek-r1", "llama3.1"],
+  llamacpp: ["qwen3.6:latest"],
+  custom: ["custom-model"],
+};
+const PROVIDER_DEFAULT_BASE_URLS = {
+  openai: "",
+  deepseek: "https://api.deepseek.com/v1",
+  ollama: "http://localhost:11434/v1",
+  llamacpp: "http://isc.ai.huawei.com:11434/v1",
+  custom: "",
+};
+const PROVIDER_DEFAULT_MODEL_NAMES = {
+  openai: "gpt-4o-mini",
+  deepseek: "deepseek-v4-flash",
+  ollama: "qwen3",
+  llamacpp: "qwen3.6:latest",
+  custom: "custom-model",
+};
 
 function getSessionId() {
   let id = localStorage.getItem(SESSION_STORAGE_KEY);
@@ -245,22 +276,109 @@ function setBadge(el, text, className) {
 }
 
 function parseThinkingContent(content) {
-  let think = "";
-  let message = content;
+  const thinkingParts = [];
+  const messageParts = [];
+  const blockRe = /<think>([\s\S]*?)<\/think>/gi;
+  let cursor = 0;
+  let match;
 
-  const thinkStart = content.indexOf("<think>");
-  if (thinkStart !== -1) {
-    const thinkEnd = content.indexOf("</think>", thinkStart + 7);
-    if (thinkEnd !== -1) {
-      think = content.substring(thinkStart + 7, thinkEnd).trim();
-      message = (content.substring(0, thinkStart) + content.substring(thinkEnd + 8)).trim();
-    } else {
-      think = content.substring(thinkStart + 7).trim();
-      message = content.substring(0, thinkStart).trim();
-    }
+  while ((match = blockRe.exec(content)) !== null) {
+    messageParts.push(content.substring(cursor, match.index));
+    thinkingParts.push(match[1]);
+    cursor = blockRe.lastIndex;
   }
-  return { think, message };
+
+  const remainder = content.substring(cursor);
+  const openMatch = /<think>([\s\S]*)$/i.exec(remainder);
+  if (openMatch) {
+    messageParts.push(remainder.substring(0, openMatch.index));
+    thinkingParts.push(openMatch[1]);
+  } else {
+    messageParts.push(remainder);
+  }
+
+  return {
+    think: thinkingParts.join("").trim(),
+    message: messageParts.join("").trim(),
+  };
 }
+
+function splitThinkingSegments(content) {
+  const segments = [];
+  const blockRe = /<think>([\s\S]*?)<\/think>/gi;
+  let cursor = 0;
+  let match;
+
+  while ((match = blockRe.exec(content)) !== null) {
+    if (match.index > cursor) {
+      segments.push({ type: "content", text: content.substring(cursor, match.index) });
+    }
+    if (match[1]) {
+      segments.push({ type: "thinking", text: match[1] });
+    }
+    cursor = blockRe.lastIndex;
+  }
+
+  const remainder = content.substring(cursor);
+  const openMatch = /<think>([\s\S]*)$/i.exec(remainder);
+  if (openMatch) {
+    if (openMatch.index > 0) {
+      segments.push({ type: "content", text: remainder.substring(0, openMatch.index) });
+    }
+    if (openMatch[1]) {
+      segments.push({ type: "thinking", text: openMatch[1] });
+    }
+  } else if (remainder) {
+    segments.push({ type: "content", text: remainder });
+  }
+
+  return segments;
+}
+
+function renderModelOutput(content) {
+  if (!content) {
+    return `<div class="model-output-empty">${escapeHtml("等待模型输出...")}</div>`;
+  }
+
+  const rounds = content
+    .split(/\n*\[\[MODEL_OUTPUT_ROUND_BREAK\]\]\n*/g)
+    .map((round) => round.trim())
+    .filter(Boolean);
+
+  if (!rounds.length) {
+    return `<div class="model-output-empty">${escapeHtml("等待模型输出...")}</div>`;
+  }
+
+  return rounds.map((round, index) => {
+    const segments = splitThinkingSegments(round).filter((segment) => segment.text.trim());
+    const body = segments.length
+      ? segments.map((segment) => {
+        const isThinking = segment.type === "thinking";
+        const label = isThinking ? "[思考]" : "[回复]";
+        const className = isThinking ? "model-output-line thinking" : "model-output-line reply";
+        return `
+          <div class="${className}">
+            <span class="model-output-segment-label">${label}</span>
+            <span class="model-output-segment-content">${escapeHtml(segment.text.trim())}</span>
+          </div>
+        `;
+      }).join("")
+      : `
+        <div class="model-output-line reply">
+          <span class="model-output-segment-label">[回复]</span>
+          <span class="model-output-segment-content">${escapeHtml(round)}</span>
+        </div>
+      `;
+
+    return `
+      <div class="model-output-round">
+        <div class="model-output-round-header">第 ${index + 1} 轮</div>
+        <div class="model-output-round-body">${body}</div>
+      </div>
+    `;
+  }).join("");
+}
+
 
 function renderAssistantMarkdown(content) {
   if (!window.marked || !window.DOMPurify) {
@@ -407,7 +525,7 @@ function renderEventDetail(event) {
           <div class="detail-label">📥 发送的 Message (Prompts)</div>
           <div class="orchestrator-prompts">
             ${prompt.map((p) => `
-              <details class="orchestrator-prompt-details" open>
+              <details class="orchestrator-prompt-details">
                 <summary class="orchestrator-prompt-summary">
                   <span class="badge neutral">${escapeHtml(p.role || 'prompt')}</span>
                   <span class="prompt-summary-text">提示词 / 对话上下文</span>
@@ -466,11 +584,15 @@ function renderEventDetail(event) {
     const messages = update.messages || [];
     const toolCalls = messages.flatMap((message) => message.tool_calls || []);
 
-    if (nodeName === "orchestrator") {
-      const think = update.orchestrator_think || "";
-      const msg = update.orchestrator_message || "";
-      const prompt = update.orchestrator_prompt || [];
-      const stateFields = Object.keys(update).filter((key) => key !== "messages" && key !== "orchestrator_think" && key !== "orchestrator_message" && key !== "orchestrator_prompt");
+    if (nodeName === "orchestrator" || nodeName === "evaluate") {
+      const llmPrefix = nodeName === "orchestrator" ? "orchestrator" : "evaluator";
+      const thinkKey = `${llmPrefix}_think`;
+      const messageKey = `${llmPrefix}_message`;
+      const promptKey = `${llmPrefix}_prompt`;
+      const think = update[thinkKey] || "";
+      const msg = update[messageKey] || "";
+      const prompt = update[promptKey] || [];
+      const stateFields = Object.keys(update).filter((key) => key !== "messages" && key !== thinkKey && key !== messageKey && key !== promptKey);
       return `
         <div class="detail-grid">
           <div><span class="detail-label">节点</span><strong>${escapeHtml(nodeName)}</strong></div>
@@ -481,7 +603,7 @@ function renderEventDetail(event) {
             <div class="detail-label">📥 发送的 Message (Prompts)</div>
             <div class="orchestrator-prompts">
               ${prompt.map((p) => `
-                <details class="orchestrator-prompt-details" ${p.role === 'user' ? 'open' : ''}>
+                <details class="orchestrator-prompt-details">
                   <summary class="orchestrator-prompt-summary">
                     <span class="badge neutral">${escapeHtml(p.role)}</span>
                     <span class="prompt-summary-text">${escapeHtml(p.role === 'system' ? '系统提示词' : '运行状态与历史上下文')}</span>
@@ -536,7 +658,7 @@ function renderEventDetail(event) {
                 <div class="detail-label">📥 发送的 Message (Prompts)</div>
                 <div class="orchestrator-prompts">
                   ${prompt.map((p) => `
-                    <details class="orchestrator-prompt-details" open>
+                    <details class="orchestrator-prompt-details">
                       <summary class="orchestrator-prompt-summary">
                         <span class="badge neutral">${escapeHtml(p.role || 'prompt')}</span>
                         <span class="prompt-summary-text">提示词 / 对话上下文</span>
@@ -825,7 +947,7 @@ function mermaidNodeClass(route, active, visited) {
   return routeClass(route, active, visited);
 }
 
-function buildRouteMermaidDefinition(active, visited, edgeLabels) {
+function buildRouteMermaidDefinition(active, visited, edgeLabels, llmActiveNode) {
   const nodeClasses = {
     S: mermaidNodeClass("START", active, visited),
     O: mermaidNodeClass("orchestrator", active, visited),
@@ -834,6 +956,7 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels) {
     X: mermaidNodeClass("END", active, visited),
     T: mermaidNodeClass("tools", active, visited),
     M: mermaidNodeClass("memory", active, visited),
+    L: llmActiveNode ? "llmCallActive" : "visited",
   };
 
   const classLines = Object.entries(nodeClasses)
@@ -859,11 +982,15 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels) {
     X: 'X(["END"])',
     T: 'T["Tools"]',
     M: 'M["MemoryManager"]',
+    L: 'L["<i class=\'fa-solid fa-brain\' style=\'font-size: 16px;\'></i>"]',
   };
   const edgeLines = edges.map(([key, from, to, style]) => {
     const label = edgeLabels.get(key)?.join(", ");
     const fromNode = nodeSyntax[from];
     const toNode = nodeSyntax[to];
+    if (style === "dashed_llm") {
+      return `  ${fromNode} -.-> ${toNode}`;
+    }
     if (!label) {
       return `  ${fromNode} ${style === "dotted" ? "-.->" : "-->"} ${toNode}`;
     }
@@ -873,17 +1000,27 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels) {
     return `  ${fromNode} -->|${label}| ${toNode}`;
   }).join("\n");
   const linkStyles = edges
-    .map(([key], index) => edgeLabels.has(key) ? `  linkStyle ${index} stroke:#2563eb,stroke-width:3px;` : "")
+    .map(([key, from, to, style], index) => {
+      if (style === "dashed_llm") {
+        const isActive = (from === "O" && llmActiveNode === "orchestrator") ||
+                         (from === "A" && llmActiveNode === "agent") ||
+                         (from === "E" && llmActiveNode === "evaluate");
+        return isActive ? `  linkStyle ${index} stroke:#15803d,stroke-width:3px;` : "";
+      }
+      return edgeLabels.has(key) ? `  linkStyle ${index} stroke:#2563eb,stroke-width:3px;` : "";
+    })
     .filter(Boolean)
     .join("\n");
 
   return `
 flowchart TD
 ${edgeLines}
+  ${nodeSyntax.L}
 
   classDef idle fill:#f3f6fa,stroke:#d9e1ec,color:#667085,stroke-width:1px;
   classDef visited fill:#eaf1ff,stroke:#bdd2fb,color:#2563eb,stroke-width:1.5px;
-  classDef active fill:#e8f7ee,stroke:#15803d,color:#15803d,stroke-width:3px;
+  classDef active fill:#e8f7ee,stroke:#15803d,color:#15803d,stroke-width:1.5px;
+  classDef llmCallActive fill:#e8f7ee,stroke:#15803d,color:#15803d,stroke-width:1.5px,stroke-dasharray: 5 5;
   ${classLines}
 ${linkStyles}
 `;
@@ -895,16 +1032,18 @@ function loadMermaid() {
       .then((module) => {
         module.default.initialize({
           startOnLoad: false,
-          securityLevel: "strict",
+          securityLevel: "loose",
           theme: "base",
           flowchart: {
             curve: "basis",
-            htmlLabels: false,
+            htmlLabels: true,
             nodeSpacing: 18,
             rankSpacing: 22,
           },
           themeVariables: {
             fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+            fontSize: "10px",
+            labelFontSize: "9px",
             primaryColor: "#f3f6fa",
             primaryBorderColor: "#d9e1ec",
             primaryTextColor: "#162033",
@@ -940,11 +1079,149 @@ async function renderMermaidRouteDiagram(definition, version) {
   }
 }
 
+
+let activeModelConfig = null;
+
+function getStoredModelConfig() {
+  try {
+    const raw = localStorage.getItem(MODEL_CONFIG_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
+    return null;
+  }
+}
+
+function setModelConfigBadge(config, source = "server") {
+  if (!els.modelConfigBadge || !config) return;
+  const provider = providerLabel(config.provider || "openai");
+  const model = config.model_name || "未设置";
+  els.modelConfigBadge.textContent = `${source === "local" ? "自定义" : "服务端默认"}: ${provider} / ${model}`;
+  els.modelConfigBadge.className = `badge success model-config-badge ${source === "local" ? "custom" : "server"}`;
+}
+
+function providerLabel(provider) {
+  const labels = {
+    openai: "OpenAI",
+    deepseek: "DeepSeek",
+    ollama: "Ollama",
+    llamacpp: "llama.cpp",
+    custom: "Custom",
+  };
+  return labels[provider] || provider || "-";
+}
+
+function modelPresetsFor(provider) {
+  return MODEL_PRESETS[provider] || [];
+}
+
+function shouldUseCustomModelInput() {
+  return !els.modelPresetSelect || els.modelPresetSelect.value === "__custom__";
+}
+
+function selectedModelName() {
+  if (!els.modelPresetSelect || els.modelPresetSelect.value === "__custom__") {
+    return els.modelNameInput.value.trim();
+  }
+  return els.modelPresetSelect.value;
+}
+
+function updateCustomModelVisibility() {
+  if (!els.modelNameField) return;
+  const isCustom = shouldUseCustomModelInput();
+  els.modelNameField.classList.toggle("hidden", !isCustom);
+  if (!isCustom) {
+    els.modelNameInput.value = els.modelPresetSelect.value;
+  }
+}
+
+function populateModelPresets(provider, selectedModel = "") {
+  if (!els.modelPresetSelect) return;
+  const presets = modelPresetsFor(provider);
+  const usesPreset = selectedModel && presets.includes(selectedModel);
+  els.modelPresetSelect.innerHTML = presets
+    .map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`)
+    .join("") + `<option value="__custom__">自定义...</option>`;
+  els.modelPresetSelect.value = usesPreset ? selectedModel : "__custom__";
+}
+
+function applyModelConfig(config, source = "server") {
+  if (!els.modelConfigForm || !config) return;
+  const provider = config.provider || "openai";
+  const modelName = config.model_name || "";
+  const defaultBaseUrls = config.default_base_urls || PROVIDER_DEFAULT_BASE_URLS;
+  const defaultModelNames = config.default_model_names || PROVIDER_DEFAULT_MODEL_NAMES;
+  Object.assign(PROVIDER_DEFAULT_BASE_URLS, defaultBaseUrls);
+  Object.assign(PROVIDER_DEFAULT_MODEL_NAMES, defaultModelNames);
+
+  activeModelConfig = { ...config, source };
+  els.modelProviderSelect.value = provider;
+  populateModelPresets(provider, modelName);
+  els.modelNameInput.value = modelName;
+  els.modelBaseUrlInput.value = config.base_url || PROVIDER_DEFAULT_BASE_URLS[provider] || "";
+  els.modelApiKeyInput.value = config.api_key || "";
+  els.modelApiKeyInput.placeholder = config.api_key_set ? "服务端已配置，留空使用服务端" : "可选，仅保存在浏览器";
+  updateCustomModelVisibility();
+  setModelConfigBadge(activeModelConfig, source);
+}
+
+function buildModelConfigFromForm() {
+  return {
+    provider: els.modelProviderSelect.value,
+    model_name: selectedModelName(),
+    base_url: els.modelBaseUrlInput.value.trim(),
+    api_key: els.modelApiKeyInput.value,
+  };
+}
+
+function saveModelConfig() {
+  if (!els.modelConfigForm) return;
+  const payload = buildModelConfigFromForm();
+  if (!payload.model_name) {
+    alert("模型名称必填");
+    els.modelNameInput.focus();
+    return;
+  }
+  localStorage.setItem(MODEL_CONFIG_STORAGE_KEY, JSON.stringify(payload));
+  applyModelConfig(payload, "local");
+}
+
+async function loadModelConfig() {
+  if (!els.modelConfigForm) return;
+  try {
+    const response = await fetch("/api/model-config", { headers: sessionHeaders() });
+    const serverConfig = await response.json();
+    if (!response.ok) {
+      setModelConfigBadge({ provider: "custom", model_name: serverConfig.detail || "加载失败" }, "server");
+      return;
+    }
+    const localConfig = getStoredModelConfig();
+    const config = localConfig
+      ? { ...serverConfig, ...localConfig, default_base_urls: serverConfig.default_base_urls, providers: serverConfig.providers }
+      : serverConfig;
+    applyModelConfig(config, localConfig ? "local" : "server");
+  } catch (error) {
+    setModelConfigBadge({ provider: "custom", model_name: `加载失败：${error.message}` }, "server");
+  }
+}
+
+function activeModelPayload() {
+  if (!activeModelConfig) {
+    return null;
+  }
+  return {
+    provider: activeModelConfig.provider,
+    model_name: activeModelConfig.model_name,
+    base_url: activeModelConfig.base_url || "",
+    api_key: activeModelConfig.api_key || "",
+  };
+}
+
 function renderRoutes(state) {
   const active = state.current_node || "";
   const visited = collectVisitedRoutes(state);
   const edgeLabels = collectRouteEdgeLabels(state);
-  const mermaidDefinition = buildRouteMermaidDefinition(active, visited, edgeLabels);
+  const mermaidDefinition = buildRouteMermaidDefinition(active, visited, edgeLabels, state.llm_active_node);
 
   // Skip rendering if the definition has not changed
   if (mermaidDefinition === lastRenderedDefinition) {
@@ -974,7 +1251,11 @@ function renderState(state) {
   els.stopBtn.disabled = status !== "running";
   els.sendBtn.disabled = status === "running" || status === "awaiting_approval";
   els.messageInput.disabled = status === "running" || status === "awaiting_approval";
-  els.modelOutput.textContent = state.model_output || "等待模型输出...";
+  if (els.saveModelConfigBtn) {
+    els.saveModelConfigBtn.disabled = status === "running" || status === "awaiting_approval";
+  }
+  els.modelOutput.innerHTML = renderModelOutput(state.model_output || "");
+  els.modelOutput.scrollTop = els.modelOutput.scrollHeight;
 
   renderMessages(state.messages || []);
   renderEvents(state.events || []);
@@ -1074,7 +1355,7 @@ els.chatForm.addEventListener("submit", async (event) => {
     const response = await fetch(`/api/chat?session_id=${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: sessionHeaders(),
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, model_config: activeModelPayload() }),
     });
 
     const payload = await response.json().catch(() => ({}));
@@ -1096,6 +1377,35 @@ els.chatForm.addEventListener("submit", async (event) => {
     alert(`发送失败：${error.message}`);
   }
 });
+
+if (els.modelProviderSelect) {
+  els.modelProviderSelect.addEventListener("change", () => {
+    const provider = els.modelProviderSelect.value;
+    const presets = modelPresetsFor(provider);
+    const nextModel = PROVIDER_DEFAULT_MODEL_NAMES[provider] || presets[0] || "";
+    populateModelPresets(provider, nextModel);
+    els.modelNameInput.value = nextModel;
+    els.modelBaseUrlInput.value = PROVIDER_DEFAULT_BASE_URLS[provider] || "";
+    updateCustomModelVisibility();
+  });
+}
+
+if (els.modelPresetSelect) {
+  els.modelPresetSelect.addEventListener("change", () => {
+    updateCustomModelVisibility();
+    if (els.modelPresetSelect.value === "__custom__") {
+      els.modelNameInput.focus();
+      els.modelNameInput.select();
+    }
+  });
+}
+
+if (els.modelConfigForm) {
+  els.modelConfigForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveModelConfig();
+  });
+}
 
 els.messageInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
@@ -1154,5 +1464,6 @@ els.eventList.addEventListener("click", (event) => {
 });
 
 initializeProgressSplitResizer();
+loadModelConfig();
 loadState();
 connectWs();

@@ -16,6 +16,7 @@ from app.nodes import (
     tools_execution_node,
 )
 from app.logging_config import logger
+from app.llm_logging import log_user_question
 
 # ----------------- 路由裁判逻辑 -----------------
 def route_after_evaluation(state: AgentState) -> str:
@@ -76,6 +77,7 @@ async def main():
             config["configurable"]["thread_id"] = str(uuid.uuid4())
             continue
 
+        log_user_question("cli", user_input)
         memory_messages = trim_messages(memory_messages, session_id="cli")
         memory_messages.append(HumanMessage(content=user_input))
         initial_input = {

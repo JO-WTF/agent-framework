@@ -107,7 +107,7 @@ Memory Manager 有两级上下文治理。
 
 - `normalize_context_tags()`：清洗标签格式。
 - `infer_context_tags()`：根据文本启发式识别标签。
-- `load_static_guidelines()`：按标签加载 `CLAUDE.md` 中的规则片段。
+- `load_static_guidelines()`：按标签加载 `STATIC_GUIDELINES.md` 中的规则片段。
 - `load_agent_notes()`：按标签加载 `.data/global/agent_memory.json` 中的经验笔记。
 
 已知标签包括：

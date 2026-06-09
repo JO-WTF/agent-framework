@@ -9,6 +9,7 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from app.config import PROMPTS, llm_client
+from app.llm_logging import log_llm_request, log_llm_response
 from app.logging_config import logger
 from app.tools.context import set_session_id
 from app.tools.registry import AGENT_TOOLS
@@ -389,7 +390,9 @@ async def fix_node(state: ToolExecutionState, config: RunnableConfig) -> dict[st
     ]
 
     try:
+        log_llm_request("tool_fix_args", messages)
         response = await llm_client.ainvoke(messages, config=config)
+        log_llm_response("tool_fix_args", response)
         response_text = str(getattr(response, "content", response))
         payload = _extract_json_object(response_text)
     except Exception as exc:

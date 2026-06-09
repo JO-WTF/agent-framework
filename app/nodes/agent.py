@@ -1,14 +1,12 @@
 from langchain_core.messages import SystemMessage
 from langchain_core.runnables.config import RunnableConfig
 
-from app.config import AgentState, llm_client
+from app.config import AgentState, get_llm_client_from_config
 from app.logging_config import logger
+from app.llm_logging import log_llm_request, log_llm_response
 from app.memory.store import trim_messages
 from app.nodes.common import format_todo_context, get_system_prompt
 from app.tools.registry import AGENT_TOOLS
-
-
-llm_with_tools = llm_client.bind_tools(AGENT_TOOLS)
 
 
 async def agent_reasoning_node(state: AgentState, config: RunnableConfig):
@@ -20,5 +18,20 @@ async def agent_reasoning_node(state: AgentState, config: RunnableConfig):
     )
     session_id = state.get("session_id")
     messages = [SystemMessage(content=system_prompt)] + trim_messages(state["messages"], session_id=session_id)
-    response = await llm_with_tools.ainvoke(messages, config)
+    log_llm_request("agent", messages)
+
+    session = None
+    if session_id:
+        from app.web import manager
+        session = manager.sessions.get(session_id)
+        if session:
+            await session.set_llm_active("agent")
+
+    try:
+        response = await get_llm_client_from_config(config).bind_tools(AGENT_TOOLS).ainvoke(messages, config)
+    finally:
+        if session:
+            await session.set_llm_active(None)
+
+    log_llm_response("agent", response)
     return {"messages": [response], "last_node": "agent"}

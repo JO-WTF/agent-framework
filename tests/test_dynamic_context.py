@@ -17,7 +17,7 @@ from app.nodes.common import get_system_prompt, infer_context_tags_from_state
 class DynamicContextTests(unittest.TestCase):
     def test_static_guidelines_are_selected_by_context_tags(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            guidelines = Path(tmpdir) / "CLAUDE.md"
+            guidelines = Path(tmpdir) / "STATIC_GUIDELINES.md"
             guidelines.write_text(
                 "# General [general]\n通用规则\n\n"
                 "# File Rules [file_system]\n文件系统规则\n\n"

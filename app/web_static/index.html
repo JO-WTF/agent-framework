@@ -4,11 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agent Console</title>
-    <link rel="stylesheet" href="/static/styles.css?v=progress-split-v1" />
-
-
-
-
+    <link rel="stylesheet" href="/static/styles.css?v=session-model-config-v1" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
   </head>
@@ -20,6 +17,35 @@
           <p>LangGraph agent 运行控制台</p>
         </div>
         <div class="topbar-actions">
+          <form id="modelConfigForm" class="model-config-form">
+            <label>
+              <span>供应商</span>
+              <select id="modelProviderSelect">
+                <option value="openai">OpenAI</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="ollama">Ollama</option>
+                <option value="llamacpp">llama.cpp</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <label>
+              <span>模型</span>
+              <select id="modelPresetSelect"></select>
+            </label>
+            <label id="modelNameField" class="model-name-field hidden">
+              <span>模型名称</span>
+              <input id="modelNameInput" type="text" placeholder="model name" />
+            </label>
+            <label class="base-url-field">
+              <span>Base URL</span>
+              <input id="modelBaseUrlInput" type="url" placeholder="https://..." />
+            </label>
+            <label class="token-field">
+              <span>Token</span>
+              <input id="modelApiKeyInput" type="password" autocomplete="off" placeholder="可选，留空使用默认" />
+            </label>
+            <button id="saveModelConfigBtn" class="button" type="submit">保存到浏览器</button>
+          </form>
           <span id="connectionBadge" class="badge neutral">连接中</span>
           <span id="statusBadge" class="badge idle">空闲</span>
           <button id="stopBtn" class="button danger" type="button" disabled>停止任务</button>
@@ -31,7 +57,7 @@
       <main class="workspace">
         <section class="panel chat-panel">
           <div class="panel-header">
-            <h2>对话</h2>
+            <h2>对话 <span id="modelConfigBadge" class="badge success model-config-badge">服务端默认</span></h2>
           </div>
           <div id="messageList" class="message-list"></div>
           <form id="chatForm" class="composer">
@@ -48,7 +74,7 @@
 
           <div class="runtime-section">
             <div class="section-title">模型输出</div>
-            <pre id="modelOutput" class="model-output">等待模型输出...</pre>
+            <div id="modelOutput" class="model-output">等待模型输出...</div>
           </div>
 
           <div class="runtime-section timeline-wrap">
@@ -98,6 +124,6 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked-katex-extension@5.1.2/lib/index.umd.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
-    <script type="module" src="/static/app.js?v=progress-split-v1"></script>
+    <script type="module" src="/static/app.js?v=session-model-config-v1"></script>
   </body>
 </html>

@@ -102,13 +102,13 @@
 - 为所有节点提供一致的系统提示和指导原则
 
 实现细节 ✅
-- 创建 `CLAUDE.md` 作为静态全局提示
-- `app/memory/store.py` 中 `load_static_guidelines()` 加载 CLAUDE.md
+- 创建 `STATIC_GUIDELINES.md` 作为静态全局提示
+- `app/memory/store.py` 中 `load_static_guidelines()` 加载 STATIC_GUIDELINES.md
 - 所有节点调用 `get_system_prompt()` 获取完整系统提示（静态指导 + 节点特定提示）
 
 验收标准 ✅
 - 所有节点使用一致的系统提示
-- CLAUDE.md 被正确注入到模型上下文
+- STATIC_GUIDELINES.md 被正确注入到模型上下文
 - 多用户环境下提示正确隔离
 
 ## 阶段 3：编排频次与循环优化
