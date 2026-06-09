@@ -250,7 +250,7 @@ class WebConsoleCallback(AsyncCallbackHandler):
     async def on_llm_start(self, serialized, prompts, **kwargs):
         self.session.state["current_node"] = "agent"
         if self.session.state["model_output"]:
-            self.session.state["model_output"] += "\n\n--- [下一轮模型输出] ---\n\n"
+            self.session.state["model_output"] += "\n\n[[MODEL_OUTPUT_ROUND_BREAK]]\n\n"
         await self.session.start_node_llm_run("agent", prompts)
 
     async def on_llm_new_token(self, token: str, **kwargs) -> None:

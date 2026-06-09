@@ -337,22 +337,40 @@ function splitThinkingSegments(content) {
 
 function renderModelOutput(content) {
   if (!content) {
-    return escapeHtml("等待模型输出...");
+    return `<div class="model-output-empty">${escapeHtml("等待模型输出...")}</div>`;
   }
 
-  const segments = splitThinkingSegments(content);
-  if (!segments.length) {
-    return "";
+  const rounds = content
+    .split(/\n*\[\[MODEL_OUTPUT_ROUND_BREAK\]\]\n*/g)
+    .map((round) => round.trim())
+    .filter(Boolean);
+
+  if (!rounds.length) {
+    return `<div class="model-output-empty">${escapeHtml("等待模型输出...")}</div>`;
   }
 
-  return segments.map((segment, index) => {
-    const text = escapeHtml(segment.text);
-    if (segment.type === "thinking") {
-      const nextSegment = segments[index + 1];
-      const separator = nextSegment?.type === "content" && !nextSegment.text.startsWith("\n") ? "\n" : "";
-      return `<span class="model-output-thinking">${text}</span>${separator}`;
-    }
-    return text;
+  return rounds.map((round, index) => {
+    const segments = splitThinkingSegments(round).filter((segment) => segment.text.trim());
+    const body = segments.length
+      ? segments.map((segment) => {
+        const isThinking = segment.type === "thinking";
+        const label = isThinking ? "思考" : "回复";
+        const className = isThinking ? "model-output-segment thinking" : "model-output-segment reply";
+        return `
+          <section class="${className}">
+            <div class="model-output-segment-label">${label}</div>
+            <div class="model-output-segment-content">${escapeHtml(segment.text.trim())}</div>
+          </section>
+        `;
+      }).join("")
+      : `<section class="model-output-segment reply"><div class="model-output-segment-content">${escapeHtml(round)}</div></section>`;
+
+    return `
+      <article class="model-output-round">
+        <div class="model-output-round-header">第 ${index + 1} 轮模型输出</div>
+        <div class="model-output-round-body">${body}</div>
+      </article>
+    `;
   }).join("");
 }
 
