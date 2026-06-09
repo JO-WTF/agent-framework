@@ -87,6 +87,7 @@ class ConsoleSession:
             "events": [],
             "messages": [],
             "model_config": get_llm_settings(),
+            "llm_active_node": None,
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -147,8 +148,30 @@ class ConsoleSession:
         if last_event and last_event.get("type") == "node_update" and last_event.get("node") == "agent":
             details = last_event.setdefault("details", {})
             llm_run = details.setdefault("llm_run", {})
-            raw_segment = f"<think>{token}</think>" if token_type == "thinking" else token
-            content = f"{llm_run.get('content', '')}{raw_segment}"
+
+            if token_type == "thinking":
+                llm_run["_thinking_field_used"] = True
+
+            content = llm_run.get("content", "")
+
+            if llm_run.get("_thinking_field_used"):
+                last_think = content.rfind("<think>")
+                last_think_close = content.rfind("</think>")
+                is_think_open = (last_think != -1) and (last_think_close == -1 or last_think > last_think_close)
+
+                if token_type == "thinking":
+                    if not is_think_open:
+                        content += f"<think>{token}"
+                    else:
+                        content += token
+                else:
+                    if is_think_open:
+                        content += f"</think>{token}"
+                    else:
+                        content += token
+            else:
+                content += token
+
             llm_run["content"] = content
             llm_run["token_count"] = llm_run.get("token_count", 0) + 1
 
@@ -168,12 +191,28 @@ class ConsoleSession:
         if last_event and last_event.get("type") == "node_update" and last_event.get("node") == "agent":
             details = last_event.setdefault("details", {})
             llm_run = details.setdefault("llm_run", {})
+
+            content = llm_run.get("content", "")
+            if llm_run.get("_thinking_field_used"):
+                last_think = content.rfind("<think>")
+                last_think_close = content.rfind("</think>")
+                is_think_open = (last_think != -1) and (last_think_close == -1 or last_think > last_think_close)
+                if is_think_open:
+                    content += "</think>"
+                    llm_run["content"] = content
+
+            think, message = parse_thinking_content(content)
+            llm_run["think"] = think
+            llm_run["message"] = message
+
             llm_run["status"] = "completed"
             last_event["title"] = f"节点更新: agent (模型调用完成, {llm_run.get('token_count', 0)} tokens)"
             last_event["updated_at"] = now
             await self.broadcast(last_event)
 
-
+    async def set_llm_active(self, node_name: str | None) -> None:
+        self.state["llm_active_node"] = node_name
+        await self.broadcast({"type": "llm_active_update", "title": "LLM 状态更新", "details": {"active_node": node_name}})
 
     async def broadcast(self, event: dict[str, Any]) -> None:
         stale = []
@@ -202,6 +241,7 @@ class ConsoleSession:
             "events": [],
             "messages": [],
             "model_config": get_llm_settings(),
+            "llm_active_node": None,
         })
 
     async def refresh_approvals(self) -> None:
@@ -249,6 +289,7 @@ class WebConsoleCallback(AsyncCallbackHandler):
 
     async def on_llm_start(self, serialized, prompts, **kwargs):
         self.session.state["current_node"] = "agent"
+        self.session.state["_thinking_field_used"] = False
         if self.session.state["model_output"]:
             self.session.state["model_output"] += "\n\n[[MODEL_OUTPUT_ROUND_BREAK]]\n\n"
         await self.session.start_node_llm_run("agent", prompts)
@@ -258,14 +299,39 @@ class WebConsoleCallback(AsyncCallbackHandler):
         text = content or token
 
         if thinking:
-            self.session.state["model_output"] += f"<think>{thinking}</think>"
+            self.session.state["_thinking_field_used"] = True
+            model_output = self.session.state["model_output"]
+            last_think = model_output.rfind("<think>")
+            last_think_close = model_output.rfind("</think>")
+            is_think_open = (last_think != -1) and (last_think_close == -1 or last_think > last_think_close)
+            if not is_think_open:
+                self.session.state["model_output"] += f"<think>{thinking}"
+            else:
+                self.session.state["model_output"] += thinking
             await self.session.update_node_llm_run(thinking, token_type="thinking")
 
         if text:
-            self.session.state["model_output"] += text
+            if self.session.state.get("_thinking_field_used"):
+                model_output = self.session.state["model_output"]
+                last_think = model_output.rfind("<think>")
+                last_think_close = model_output.rfind("</think>")
+                is_think_open = (last_think != -1) and (last_think_close == -1 or last_think > last_think_close)
+                if is_think_open:
+                    self.session.state["model_output"] += f"</think>{text}"
+                else:
+                    self.session.state["model_output"] += text
+            else:
+                self.session.state["model_output"] += text
             await self.session.update_node_llm_run(text)
 
     async def on_llm_end(self, response, **kwargs):
+        if self.session.state.get("_thinking_field_used"):
+            model_output = self.session.state["model_output"]
+            last_think = model_output.rfind("<think>")
+            last_think_close = model_output.rfind("</think>")
+            is_think_open = (last_think != -1) and (last_think_close == -1 or last_think > last_think_close)
+            if is_think_open:
+                self.session.state["model_output"] += "</think>"
         await self.session.complete_node_llm_run()
 
 
@@ -576,6 +642,7 @@ async def chat(request: Request, payload: ChatRequest):
         "events": [],
         "messages": [serialize_message(m) for m in session.memory_messages],
         "model_config": model_config,
+        "llm_active_node": None,
     })
     await session.publish({
         "type": "run_start",
@@ -602,6 +669,7 @@ async def resume_after_approval(session_id: str, session: ConsoleSession, approv
         "model_output": "",
         "tool_runs": [],
         "messages": [serialize_message(m) for m in session.memory_messages],
+        "llm_active_node": None,
     })
     await session.publish({
         "type": "run_start",

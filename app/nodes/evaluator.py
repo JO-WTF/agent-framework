@@ -55,7 +55,20 @@ async def evaluate_response_node(state: AgentState, config: RunnableConfig):
         )),
     ]
     log_llm_request("evaluator", llm_messages)
-    response = await llm_client.ainvoke(llm_messages, silent_config(config))
+
+    session = None
+    if session_id:
+        from app.web import manager
+        session = manager.sessions.get(session_id)
+        if session:
+            await session.set_llm_active("evaluate")
+
+    try:
+        response = await llm_client.ainvoke(llm_messages, silent_config(config))
+    finally:
+        if session:
+            await session.set_llm_active(None)
+
     log_llm_response("evaluator", response)
     think_content, message_content = _extract_evaluator_thinking_and_message(response)
     eval_result = message_content.strip()

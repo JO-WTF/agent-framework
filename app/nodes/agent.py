@@ -19,6 +19,19 @@ async def agent_reasoning_node(state: AgentState, config: RunnableConfig):
     session_id = state.get("session_id")
     messages = [SystemMessage(content=system_prompt)] + trim_messages(state["messages"], session_id=session_id)
     log_llm_request("agent", messages)
-    response = await get_llm_client_from_config(config).bind_tools(AGENT_TOOLS).ainvoke(messages, config)
+
+    session = None
+    if session_id:
+        from app.web import manager
+        session = manager.sessions.get(session_id)
+        if session:
+            await session.set_llm_active("agent")
+
+    try:
+        response = await get_llm_client_from_config(config).bind_tools(AGENT_TOOLS).ainvoke(messages, config)
+    finally:
+        if session:
+            await session.set_llm_active(None)
+
     log_llm_response("agent", response)
     return {"messages": [response], "last_node": "agent"}

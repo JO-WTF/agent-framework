@@ -947,7 +947,7 @@ function mermaidNodeClass(route, active, visited) {
   return routeClass(route, active, visited);
 }
 
-function buildRouteMermaidDefinition(active, visited, edgeLabels) {
+function buildRouteMermaidDefinition(active, visited, edgeLabels, llmActiveNode) {
   const nodeClasses = {
     S: mermaidNodeClass("START", active, visited),
     O: mermaidNodeClass("orchestrator", active, visited),
@@ -956,6 +956,7 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels) {
     X: mermaidNodeClass("END", active, visited),
     T: mermaidNodeClass("tools", active, visited),
     M: mermaidNodeClass("memory", active, visited),
+    L: llmActiveNode ? "llmCallActive" : "visited",
   };
 
   const classLines = Object.entries(nodeClasses)
@@ -981,11 +982,15 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels) {
     X: 'X(["END"])',
     T: 'T["Tools"]',
     M: 'M["MemoryManager"]',
+    L: 'L["<i class=\'fa-solid fa-brain\' style=\'font-size: 16px;\'></i>"]',
   };
   const edgeLines = edges.map(([key, from, to, style]) => {
     const label = edgeLabels.get(key)?.join(", ");
     const fromNode = nodeSyntax[from];
     const toNode = nodeSyntax[to];
+    if (style === "dashed_llm") {
+      return `  ${fromNode} -.-> ${toNode}`;
+    }
     if (!label) {
       return `  ${fromNode} ${style === "dotted" ? "-.->" : "-->"} ${toNode}`;
     }
@@ -995,17 +1000,27 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels) {
     return `  ${fromNode} -->|${label}| ${toNode}`;
   }).join("\n");
   const linkStyles = edges
-    .map(([key], index) => edgeLabels.has(key) ? `  linkStyle ${index} stroke:#2563eb,stroke-width:3px;` : "")
+    .map(([key, from, to, style], index) => {
+      if (style === "dashed_llm") {
+        const isActive = (from === "O" && llmActiveNode === "orchestrator") ||
+                         (from === "A" && llmActiveNode === "agent") ||
+                         (from === "E" && llmActiveNode === "evaluate");
+        return isActive ? `  linkStyle ${index} stroke:#15803d,stroke-width:3px;` : "";
+      }
+      return edgeLabels.has(key) ? `  linkStyle ${index} stroke:#2563eb,stroke-width:3px;` : "";
+    })
     .filter(Boolean)
     .join("\n");
 
   return `
 flowchart TD
 ${edgeLines}
+  ${nodeSyntax.L}
 
   classDef idle fill:#f3f6fa,stroke:#d9e1ec,color:#667085,stroke-width:1px;
   classDef visited fill:#eaf1ff,stroke:#bdd2fb,color:#2563eb,stroke-width:1.5px;
-  classDef active fill:#e8f7ee,stroke:#15803d,color:#15803d,stroke-width:3px;
+  classDef active fill:#e8f7ee,stroke:#15803d,color:#15803d,stroke-width:1.5px;
+  classDef llmCallActive fill:#e8f7ee,stroke:#15803d,color:#15803d,stroke-width:1.5px,stroke-dasharray: 5 5;
   ${classLines}
 ${linkStyles}
 `;
@@ -1017,16 +1032,18 @@ function loadMermaid() {
       .then((module) => {
         module.default.initialize({
           startOnLoad: false,
-          securityLevel: "strict",
+          securityLevel: "loose",
           theme: "base",
           flowchart: {
             curve: "basis",
-            htmlLabels: false,
+            htmlLabels: true,
             nodeSpacing: 18,
             rankSpacing: 22,
           },
           themeVariables: {
             fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+            fontSize: "10px",
+            labelFontSize: "9px",
             primaryColor: "#f3f6fa",
             primaryBorderColor: "#d9e1ec",
             primaryTextColor: "#162033",
@@ -1204,7 +1221,7 @@ function renderRoutes(state) {
   const active = state.current_node || "";
   const visited = collectVisitedRoutes(state);
   const edgeLabels = collectRouteEdgeLabels(state);
-  const mermaidDefinition = buildRouteMermaidDefinition(active, visited, edgeLabels);
+  const mermaidDefinition = buildRouteMermaidDefinition(active, visited, edgeLabels, state.llm_active_node);
 
   // Skip rendering if the definition has not changed
   if (mermaidDefinition === lastRenderedDefinition) {
@@ -1238,6 +1255,7 @@ function renderState(state) {
     els.saveModelConfigBtn.disabled = status === "running" || status === "awaiting_approval";
   }
   els.modelOutput.innerHTML = renderModelOutput(state.model_output || "");
+  els.modelOutput.scrollTop = els.modelOutput.scrollHeight;
 
   renderMessages(state.messages || []);
   renderEvents(state.events || []);

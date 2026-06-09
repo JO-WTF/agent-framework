@@ -40,7 +40,20 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
         HumanMessage(content=user_prompt),
     ]
     log_llm_request("orchestrator", llm_messages)
-    response = await llm_client.ainvoke(llm_messages, silent_config(config))
+    
+    session = None
+    if session_id:
+        from app.web import manager
+        session = manager.sessions.get(session_id)
+        if session:
+            await session.set_llm_active("orchestrator")
+            
+    try:
+        response = await llm_client.ainvoke(llm_messages, silent_config(config))
+    finally:
+        if session:
+            await session.set_llm_active(None)
+
     log_llm_response("orchestrator", response)
 
     import re
