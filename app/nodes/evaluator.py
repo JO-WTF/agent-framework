@@ -3,6 +3,7 @@ from langchain_core.runnables.config import RunnableConfig
 
 from app.config import AgentState, llm_client
 from app.logging_config import logger
+from app.llm_logging import log_llm_request, log_llm_response
 from app.memory.store import trim_messages
 from app.nodes.common import format_todo_context, get_system_prompt, silent_config, summarize_recent_messages
 
@@ -22,15 +23,18 @@ async def evaluate_response_node(state: AgentState, config: RunnableConfig):
     recent_messages = summarize_recent_messages({"messages": trimmed_messages})
 
     system_prompt = get_system_prompt("evaluator", context_tags=state.get("context_tags"))
-    response = await llm_client.ainvoke([
+    llm_messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=(
             f"问题: {user_q}\n\n"
             f"Orchestrator todo 状态:\n{format_todo_context(state)}\n\n"
             f"最近上下文摘要:\n{recent_messages}\n\n"
             f"回复:\n{draft_reply}"
-        ))
-    ], silent_config(config))
+        )),
+    ]
+    log_llm_request("evaluator", llm_messages)
+    response = await llm_client.ainvoke(llm_messages, silent_config(config))
+    log_llm_response("evaluator", response)
     eval_result = response.content.strip()
 
     if eval_result.startswith("REJECT"):

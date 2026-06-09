@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.cli import build_agent_graph
 from app.config import get_llm_settings, normalize_llm_settings, redact_llm_settings
 from app.llm_streaming import extract_thinking_and_content
+from app.llm_logging import log_user_question
 from app.memory.store import append_session_event, trim_messages
 from app.runtime_paths import STATIC_DIR
 from app.tools.approvals import approve_pending_approval, list_approvals, list_pending_approvals, reject_approval
@@ -536,6 +537,8 @@ async def chat(request: Request, payload: ChatRequest):
         raise HTTPException(status_code=400, detail="message is required")
     if session.running_task and not session.running_task.done():
         raise HTTPException(status_code=409, detail="agent is already running")
+
+    log_user_question(f"web:{session_id}", message)
 
     try:
         model_config_raw = normalize_llm_settings(payload.llm_config)
