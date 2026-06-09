@@ -561,11 +561,15 @@ function renderEventDetail(event) {
     const messages = update.messages || [];
     const toolCalls = messages.flatMap((message) => message.tool_calls || []);
 
-    if (nodeName === "orchestrator") {
-      const think = update.orchestrator_think || "";
-      const msg = update.orchestrator_message || "";
-      const prompt = update.orchestrator_prompt || [];
-      const stateFields = Object.keys(update).filter((key) => key !== "messages" && key !== "orchestrator_think" && key !== "orchestrator_message" && key !== "orchestrator_prompt");
+    if (nodeName === "orchestrator" || nodeName === "evaluate") {
+      const llmPrefix = nodeName === "orchestrator" ? "orchestrator" : "evaluator";
+      const thinkKey = `${llmPrefix}_think`;
+      const messageKey = `${llmPrefix}_message`;
+      const promptKey = `${llmPrefix}_prompt`;
+      const think = update[thinkKey] || "";
+      const msg = update[messageKey] || "";
+      const prompt = update[promptKey] || [];
+      const stateFields = Object.keys(update).filter((key) => key !== "messages" && key !== thinkKey && key !== messageKey && key !== promptKey);
       return `
         <div class="detail-grid">
           <div><span class="detail-label">节点</span><strong>${escapeHtml(nodeName)}</strong></div>

@@ -1,3 +1,5 @@
+import re
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables.config import RunnableConfig
 
@@ -6,6 +8,26 @@ from app.logging_config import logger
 from app.llm_logging import log_llm_request, log_llm_response
 from app.memory.store import trim_messages
 from app.nodes.common import format_todo_context, get_system_prompt, silent_config, summarize_recent_messages
+
+
+def _extract_evaluator_thinking_and_message(response) -> tuple[str, str]:
+    think_content = ""
+    message_content = response.content or ""
+    additional_kwargs = getattr(response, "additional_kwargs", {}) or {}
+    if isinstance(additional_kwargs, dict):
+        for key in ("reasoning_content", "thinking", "reasoning", "reasoning_delta"):
+            value = additional_kwargs.get(key)
+            if value:
+                think_content = str(value)
+                break
+
+    match = re.search(r"<think>(.*?)</think>", message_content, re.DOTALL | re.IGNORECASE)
+    if match:
+        if not think_content:
+            think_content = match.group(1).strip()
+        message_content = re.sub(r"<think>.*?</think>", "", message_content, flags=re.DOTALL | re.IGNORECASE).strip()
+
+    return think_content, message_content
 
 
 async def evaluate_response_node(state: AgentState, config: RunnableConfig):
@@ -35,13 +57,29 @@ async def evaluate_response_node(state: AgentState, config: RunnableConfig):
     log_llm_request("evaluator", llm_messages)
     response = await llm_client.ainvoke(llm_messages, silent_config(config))
     log_llm_response("evaluator", response)
-    eval_result = response.content.strip()
+    think_content, message_content = _extract_evaluator_thinking_and_message(response)
+    eval_result = message_content.strip()
+
+    evaluator_update = {
+        "last_node": "evaluate",
+        "evaluator_think": think_content,
+        "evaluator_message": message_content,
+        "evaluator_prompt": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": llm_messages[1].content},
+        ],
+    }
 
     if eval_result.startswith("REJECT"):
         reason = eval_result.replace("REJECT:", "").strip()
         logger.warning(f"❌ \033[35m[不合格]\033[0m 打回重做。原因: {reason}")
         reject_msg = HumanMessage(content=f"[质检打回] 回答不合格！原因：{reason}。请参考 todo list 重新规划下一步，并重新调用必要工具获取数据。")
-        return {"eval_status": "REJECT", "revision_count": rev_count + 1, "messages": [reject_msg], "last_node": "evaluate"}
+        return {
+            "eval_status": "REJECT",
+            "revision_count": rev_count + 1,
+            "messages": [reject_msg],
+            **evaluator_update,
+        }
 
     logger.info("✅ \033[92m[合格]\033[0m 准备输出。")
-    return {"eval_status": "PASS", "last_node": "evaluate"}
+    return {"eval_status": "PASS", **evaluator_update}

@@ -33,6 +33,9 @@ class AgentState(TypedDict):
     orchestrator_think: NotRequired[str]
     orchestrator_message: NotRequired[str]
     orchestrator_prompt: NotRequired[list[dict[str, str]]]
+    evaluator_think: NotRequired[str]
+    evaluator_message: NotRequired[str]
+    evaluator_prompt: NotRequired[list[dict[str, str]]]
 
 
 DEFAULT_PROVIDER_BASE_URLS = {
