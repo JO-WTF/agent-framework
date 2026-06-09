@@ -8,11 +8,12 @@ const els = {
   modelConfigForm: document.getElementById("modelConfigForm"),
   modelProviderSelect: document.getElementById("modelProviderSelect"),
   modelPresetSelect: document.getElementById("modelPresetSelect"),
+  modelNameField: document.getElementById("modelNameField"),
   modelNameInput: document.getElementById("modelNameInput"),
   modelBaseUrlInput: document.getElementById("modelBaseUrlInput"),
   modelApiKeyInput: document.getElementById("modelApiKeyInput"),
   saveModelConfigBtn: document.getElementById("saveModelConfigBtn"),
-  modelConfigStatus: document.getElementById("modelConfigStatus"),
+  modelConfigBadge: document.getElementById("modelConfigBadge"),
   chatForm: document.getElementById("chatForm"),
   messageInput: document.getElementById("messageInput"),
   sendBtn: document.getElementById("sendBtn"),
@@ -29,6 +30,7 @@ const els = {
 };
 
 const SESSION_STORAGE_KEY = "agent_session_id";
+const MODEL_CONFIG_STORAGE_KEY = "agent_model_config";
 const PROGRESS_SPLIT_STORAGE_KEY = "agent_progress_split_todo_px";
 const PROGRESS_SPLIT_HANDLE_HEIGHT = 10;
 const PROGRESS_SPLIT_MIN_TODO = 120;
@@ -963,10 +965,24 @@ async function renderMermaidRouteDiagram(definition, version) {
 }
 
 
-function setModelConfigStatus(text, kind = "neutral") {
-  if (!els.modelConfigStatus) return;
-  els.modelConfigStatus.textContent = text;
-  els.modelConfigStatus.dataset.kind = kind;
+let activeModelConfig = null;
+
+function getStoredModelConfig() {
+  try {
+    const raw = localStorage.getItem(MODEL_CONFIG_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
+    return null;
+  }
+}
+
+function setModelConfigBadge(config, source = "server") {
+  if (!els.modelConfigBadge || !config) return;
+  const provider = providerLabel(config.provider || "openai");
+  const model = config.model_name || "未设置";
+  els.modelConfigBadge.textContent = `${source === "local" ? "自定义" : "服务端默认"}: ${provider} / ${model}`;
+  els.modelConfigBadge.className = `badge success model-config-badge ${source === "local" ? "custom" : "server"}`;
 }
 
 function providerLabel(provider) {
@@ -980,86 +996,108 @@ function providerLabel(provider) {
   return labels[provider] || provider || "-";
 }
 
-function populateModelPresets(provider, selectedModel = "") {
-  if (!els.modelPresetSelect) return;
-  const presets = MODEL_PRESETS[provider] || [];
-  const options = [...presets];
-  if (selectedModel && !options.includes(selectedModel)) {
-    options.unshift(selectedModel);
-  }
-  els.modelPresetSelect.innerHTML = options
-    .map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`)
-    .join("") + `<option value="__custom__">自定义...</option>`;
-  els.modelPresetSelect.value = selectedModel && options.includes(selectedModel) ? selectedModel : (options[0] || "__custom__");
+function modelPresetsFor(provider) {
+  return MODEL_PRESETS[provider] || [];
 }
 
-function applyModelConfig(config) {
+function shouldUseCustomModelInput() {
+  return !els.modelPresetSelect || els.modelPresetSelect.value === "__custom__";
+}
+
+function selectedModelName() {
+  if (!els.modelPresetSelect || els.modelPresetSelect.value === "__custom__") {
+    return els.modelNameInput.value.trim();
+  }
+  return els.modelPresetSelect.value;
+}
+
+function updateCustomModelVisibility() {
+  if (!els.modelNameField) return;
+  const isCustom = shouldUseCustomModelInput();
+  els.modelNameField.classList.toggle("hidden", !isCustom);
+  if (!isCustom) {
+    els.modelNameInput.value = els.modelPresetSelect.value;
+  }
+}
+
+function populateModelPresets(provider, selectedModel = "") {
+  if (!els.modelPresetSelect) return;
+  const presets = modelPresetsFor(provider);
+  const usesPreset = selectedModel && presets.includes(selectedModel);
+  els.modelPresetSelect.innerHTML = presets
+    .map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`)
+    .join("") + `<option value="__custom__">自定义...</option>`;
+  els.modelPresetSelect.value = usesPreset ? selectedModel : "__custom__";
+}
+
+function applyModelConfig(config, source = "server") {
   if (!els.modelConfigForm || !config) return;
   const provider = config.provider || "openai";
   const modelName = config.model_name || "";
   const defaultBaseUrls = config.default_base_urls || PROVIDER_DEFAULT_BASE_URLS;
   Object.assign(PROVIDER_DEFAULT_BASE_URLS, defaultBaseUrls);
 
+  activeModelConfig = { ...config, source };
   els.modelProviderSelect.value = provider;
   populateModelPresets(provider, modelName);
   els.modelNameInput.value = modelName;
   els.modelBaseUrlInput.value = config.base_url || PROVIDER_DEFAULT_BASE_URLS[provider] || "";
-  els.modelApiKeyInput.value = "";
-  els.modelApiKeyInput.placeholder = config.api_key_set ? "已配置，留空清除/使用默认" : "可选，留空使用默认";
-  setModelConfigStatus(`${providerLabel(provider)} / ${modelName || "未设置"}`, "success");
+  els.modelApiKeyInput.value = config.api_key || "";
+  els.modelApiKeyInput.placeholder = config.api_key_set ? "服务端已配置，留空使用服务端" : "可选，仅保存在浏览器";
+  updateCustomModelVisibility();
+  setModelConfigBadge(activeModelConfig, source);
+}
+
+function buildModelConfigFromForm() {
+  return {
+    provider: els.modelProviderSelect.value,
+    model_name: selectedModelName(),
+    base_url: els.modelBaseUrlInput.value.trim(),
+    api_key: els.modelApiKeyInput.value,
+  };
+}
+
+function saveModelConfig() {
+  if (!els.modelConfigForm) return;
+  const payload = buildModelConfigFromForm();
+  if (!payload.model_name) {
+    alert("模型名称必填");
+    els.modelNameInput.focus();
+    return;
+  }
+  localStorage.setItem(MODEL_CONFIG_STORAGE_KEY, JSON.stringify(payload));
+  applyModelConfig(payload, "local");
 }
 
 async function loadModelConfig() {
   if (!els.modelConfigForm) return;
-  setModelConfigStatus("加载中...", "neutral");
   try {
     const response = await fetch("/api/model-config", { headers: sessionHeaders() });
-    const config = await response.json();
+    const serverConfig = await response.json();
     if (!response.ok) {
-      setModelConfigStatus(config.detail || "加载失败", "error");
+      setModelConfigBadge({ provider: "custom", model_name: serverConfig.detail || "加载失败" }, "server");
       return;
     }
-    applyModelConfig(config);
+    const localConfig = getStoredModelConfig();
+    const config = localConfig
+      ? { ...serverConfig, ...localConfig, default_base_urls: serverConfig.default_base_urls, providers: serverConfig.providers }
+      : serverConfig;
+    applyModelConfig(config, localConfig ? "local" : "server");
   } catch (error) {
-    setModelConfigStatus(`加载失败：${error.message}`, "error");
+    setModelConfigBadge({ provider: "custom", model_name: `加载失败：${error.message}` }, "server");
   }
 }
 
-async function saveModelConfig() {
-  if (!els.modelConfigForm) return;
-  const provider = els.modelProviderSelect.value;
-  const payload = {
-    provider,
-    model_name: els.modelNameInput.value.trim(),
-    base_url: els.modelBaseUrlInput.value.trim(),
-    api_key: els.modelApiKeyInput.value,
+function activeModelPayload() {
+  if (!activeModelConfig) {
+    return null;
+  }
+  return {
+    provider: activeModelConfig.provider,
+    model_name: activeModelConfig.model_name,
+    base_url: activeModelConfig.base_url || "",
+    api_key: activeModelConfig.api_key || "",
   };
-  if (!payload.model_name) {
-    setModelConfigStatus("模型名称必填", "error");
-    els.modelNameInput.focus();
-    return;
-  }
-
-  els.saveModelConfigBtn.disabled = true;
-  setModelConfigStatus("保存中...", "neutral");
-  try {
-    const response = await fetch("/api/model-config", {
-      method: "POST",
-      headers: sessionHeaders(),
-      body: JSON.stringify(payload),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      setModelConfigStatus(result.detail || "保存失败", "error");
-      return;
-    }
-    applyModelConfig(result.model_config);
-    setModelConfigStatus("已保存", "success");
-  } catch (error) {
-    setModelConfigStatus(`保存失败：${error.message}`, "error");
-  } finally {
-    els.saveModelConfigBtn.disabled = currentState.status === "running" || currentState.status === "awaiting_approval";
-  }
 }
 
 function renderRoutes(state) {
@@ -1199,7 +1237,7 @@ els.chatForm.addEventListener("submit", async (event) => {
     const response = await fetch(`/api/chat?session_id=${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: sessionHeaders(),
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, model_config: activeModelPayload() }),
     });
 
     const payload = await response.json().catch(() => ({}));
@@ -1225,37 +1263,29 @@ els.chatForm.addEventListener("submit", async (event) => {
 if (els.modelProviderSelect) {
   els.modelProviderSelect.addEventListener("change", () => {
     const provider = els.modelProviderSelect.value;
-    const presets = MODEL_PRESETS[provider] || [];
+    const presets = modelPresetsFor(provider);
     const nextModel = presets[0] || "";
     populateModelPresets(provider, nextModel);
     els.modelNameInput.value = nextModel;
     els.modelBaseUrlInput.value = PROVIDER_DEFAULT_BASE_URLS[provider] || "";
+    updateCustomModelVisibility();
   });
 }
 
 if (els.modelPresetSelect) {
   els.modelPresetSelect.addEventListener("change", () => {
+    updateCustomModelVisibility();
     if (els.modelPresetSelect.value === "__custom__") {
       els.modelNameInput.focus();
       els.modelNameInput.select();
-      return;
     }
-    els.modelNameInput.value = els.modelPresetSelect.value;
-  });
-}
-
-if (els.modelNameInput) {
-  els.modelNameInput.addEventListener("input", () => {
-    const modelName = els.modelNameInput.value.trim();
-    const values = Array.from(els.modelPresetSelect.options).map((option) => option.value);
-    els.modelPresetSelect.value = values.includes(modelName) ? modelName : "__custom__";
   });
 }
 
 if (els.modelConfigForm) {
-  els.modelConfigForm.addEventListener("submit", async (event) => {
+  els.modelConfigForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    await saveModelConfig();
+    saveModelConfig();
   });
 }
 

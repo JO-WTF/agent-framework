@@ -10,10 +10,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.cli import build_agent_graph
-from app.config import get_llm_settings, update_llm_settings
+from app.config import get_llm_settings, normalize_llm_settings, redact_llm_settings
 from app.llm_streaming import extract_thinking_and_content
 from app.memory.store import append_session_event, trim_messages
 from app.runtime_paths import STATIC_DIR
@@ -22,19 +22,14 @@ from app.tools.sandbox import SandboxError
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     message: str
+    llm_config: dict[str, Any] | None = Field(default=None, alias="model_config")
 
 
 class ApprovalDecisionRequest(BaseModel):
     approval_id: str
-
-
-class ModelConfigRequest(BaseModel):
-    provider: str
-    model_name: str
-    base_url: str | None = None
-    api_key: str | None = None
-    temperature: float | None = None
 
 
 def parse_thinking_content(content: str) -> tuple[str, str]:
@@ -58,6 +53,7 @@ class ConsoleSession:
         self.agent_app = build_agent_graph()
         self.thread_id = str(uuid.uuid4())
         self.memory_messages = []
+        self.model_config_raw: dict[str, Any] | None = None
         self.running_task: asyncio.Task | None = None
         self.subscribers: set[asyncio.Queue] = set()
         self.state: dict[str, Any] = {
@@ -69,6 +65,7 @@ class ConsoleSession:
             "tool_runs": [],
             "events": [],
             "messages": [],
+            "model_config": get_llm_settings(),
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -177,6 +174,7 @@ class ConsoleSession:
             self.running_task.cancel()
         self.thread_id = str(uuid.uuid4())
         self.memory_messages = []
+        self.model_config_raw = None
         self.running_task = None
         self.state.update({
             "status": "idle",
@@ -187,6 +185,7 @@ class ConsoleSession:
             "tool_runs": [],
             "events": [],
             "messages": [],
+            "model_config": get_llm_settings(),
         })
 
     async def refresh_approvals(self) -> None:
@@ -399,6 +398,7 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
         "configurable": {
             "thread_id": session.thread_id,
             "session_id": session_id,
+            "llm_settings": session.model_config_raw or normalize_llm_settings(None),
         },
         "callbacks": [WebConsoleCallback(session)],
     }
@@ -522,24 +522,6 @@ async def get_model_config():
     return get_llm_settings()
 
 
-@app.post("/api/model-config")
-async def set_model_config(payload: ModelConfigRequest):
-    running_sessions = [
-        session_id
-        for session_id, session in manager.sessions.items()
-        if session.running_task and not session.running_task.done()
-    ]
-    if running_sessions:
-        raise HTTPException(status_code=409, detail="agent is running; stop or wait before changing model config")
-
-    try:
-        settings = update_llm_settings(payload.model_dump(exclude_unset=True))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {"status": "updated", "model_config": settings}
-
-
 @app.get("/api/state")
 async def get_state(request: Request):
     session_id, session = resolve_session(request)
@@ -555,6 +537,13 @@ async def chat(request: Request, payload: ChatRequest):
     if session.running_task and not session.running_task.done():
         raise HTTPException(status_code=409, detail="agent is already running")
 
+    try:
+        model_config_raw = normalize_llm_settings(payload.llm_config)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    model_config = redact_llm_settings(model_config_raw)
+    session.model_config_raw = model_config_raw
+
     user_message = HumanMessage(content=message)
     session.memory_messages.append(user_message)
     session.state.update({
@@ -568,6 +557,7 @@ async def chat(request: Request, payload: ChatRequest):
         "tool_runs": [],
         "events": [],
         "messages": [serialize_message(m) for m in session.memory_messages],
+        "model_config": model_config,
     })
     await session.publish({
         "type": "run_start",
@@ -585,6 +575,9 @@ async def resume_after_approval(session_id: str, session: ConsoleSession, approv
     target = approval.get("target_uri") or approval.get("host_path") or approval.get("target_path", "")
     message = HumanMessage(content=f"用户已处理审批 {approval.get('id')}: {status} {target}。请基于当前 world_state 继续任务。")
     session.memory_messages.append(message)
+    if not session.model_config_raw:
+        session.model_config_raw = normalize_llm_settings(None)
+        session.state["model_config"] = redact_llm_settings(session.model_config_raw)
     session.state.update({
         "status": "running",
         "current_node": "orchestrator",

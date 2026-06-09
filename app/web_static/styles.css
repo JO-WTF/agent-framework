@@ -119,31 +119,16 @@ textarea {
   min-width: 150px;
 }
 
+.model-config-form .model-name-field.hidden {
+  display: none;
+}
+
 .model-config-form .base-url-field {
   min-width: 210px;
 }
 
 .model-config-form .token-field {
   min-width: 160px;
-}
-
-.model-config-status {
-  min-width: 68px;
-  max-width: 140px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.model-config-status[data-kind="success"] {
-  color: var(--green);
-}
-
-.model-config-status[data-kind="error"] {
-  color: var(--red);
 }
 
 .workspace {
@@ -181,6 +166,15 @@ textarea {
   font-size: 15px;
   line-height: 1.2;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-config-badge {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .badge {

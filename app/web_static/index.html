@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agent Console</title>
-    <link rel="stylesheet" href="/static/styles.css?v=model-config-v1" />
+    <link rel="stylesheet" href="/static/styles.css?v=session-model-config-v1" />
 
 
 
@@ -35,7 +35,7 @@
               <span>模型</span>
               <select id="modelPresetSelect"></select>
             </label>
-            <label class="model-name-field">
+            <label id="modelNameField" class="model-name-field hidden">
               <span>模型名称</span>
               <input id="modelNameInput" type="text" placeholder="model name" />
             </label>
@@ -47,8 +47,7 @@
               <span>Token</span>
               <input id="modelApiKeyInput" type="password" autocomplete="off" placeholder="可选，留空使用默认" />
             </label>
-            <button id="saveModelConfigBtn" class="button" type="submit">保存模型</button>
-            <span id="modelConfigStatus" class="model-config-status">未加载</span>
+            <button id="saveModelConfigBtn" class="button" type="submit">保存到浏览器</button>
           </form>
           <span id="connectionBadge" class="badge neutral">连接中</span>
           <span id="statusBadge" class="badge idle">空闲</span>
@@ -61,7 +60,7 @@
       <main class="workspace">
         <section class="panel chat-panel">
           <div class="panel-header">
-            <h2>对话</h2>
+            <h2>对话 <span id="modelConfigBadge" class="badge success model-config-badge">服务端默认</span></h2>
           </div>
           <div id="messageList" class="message-list"></div>
           <form id="chatForm" class="composer">
@@ -128,6 +127,6 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked-katex-extension@5.1.2/lib/index.umd.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
-    <script type="module" src="/static/app.js?v=model-config-v1"></script>
+    <script type="module" src="/static/app.js?v=session-model-config-v1"></script>
   </body>
 </html>
