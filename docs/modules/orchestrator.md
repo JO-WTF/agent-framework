@@ -42,8 +42,8 @@ system_prompt = get_system_prompt("orchestrator", context_tags=initial_context_t
 然后把以下内容交给 LLM：
 
 - 当前任务复杂度。
-- 当前上下文标签。
 - 可选上下文标签。
+- 当前动态上下文标签由 system prompt 的 `【动态上下文标签】` 提供，user prompt 不重复携带。
 - 当前 `todo_list` JSON。
 - 最近消息摘要。
 

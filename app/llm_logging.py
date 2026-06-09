@@ -55,13 +55,15 @@ def _extract_thinking_from_response(response: Any) -> tuple[str, str]:
     return "".join(thinking_parts).strip(), content
 
 
-def _format_messages(messages: list[Any]) -> str:
+def _format_non_user_messages(messages: list[Any]) -> str:
     lines: list[str] = []
     for index, message in enumerate(messages, start=1):
+        if isinstance(message, HumanMessage):
+            continue
         role = _message_role(message)
         content = _stringify_content(getattr(message, "content", message))
         lines.append(f"[{index}] {role}:\n{content}")
-    return "\n\n".join(lines).strip() or "(empty)"
+    return "\n\n".join(lines).strip() or "(none)"
 
 
 def _format_user_prompts(messages: list[Any]) -> str:
@@ -79,11 +81,11 @@ def log_user_question(source: str, question: str) -> None:
 
 def log_llm_request(node_name: str, messages: list[Any]) -> None:
     logger.info(
-        "\n%s\n📤 [LLM Request: %s]\n【User Prompt】\n%s\n\n【Messages Sent】\n%s\n%s",
+        "\n%s\n📤 [LLM Request: %s]\n【User Prompt】\n%s\n\n【System/Context Messages】\n%s\n%s",
         "=" * 80,
         node_name,
         _format_user_prompts(messages),
-        _format_messages(messages),
+        _format_non_user_messages(messages),
         "=" * 80,
     )
 

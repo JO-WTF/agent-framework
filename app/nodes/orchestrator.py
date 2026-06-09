@@ -30,7 +30,6 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
 
     user_prompt = (
         f"当前任务复杂度: {state.get('task_complexity', 'unknown')}\n\n"
-        f"当前上下文标签: {', '.join(initial_context_tags)}\n"
         f"可选上下文标签: {format_available_context_tags()}\n\n"
         f"当前 todo_list JSON:\n{current_todo_json}\n\n"
         f"最近消息:\n{recent_messages}"
