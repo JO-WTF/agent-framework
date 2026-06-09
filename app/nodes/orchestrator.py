@@ -6,7 +6,7 @@ from langchain_core.runnables.config import RunnableConfig
 from app.config import AgentState, llm_client
 from app.logging_config import logger
 from app.llm_logging import log_llm_request, log_llm_response
-from app.memory.store import normalize_context_tags, trim_messages
+from app.memory.store import normalize_context_tags, trim_messages, get_active_skill_names
 from app.nodes.common import (
     default_orchestrator_next,
     format_available_context_tags,
@@ -101,6 +101,7 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
         "todo_list": todo_list,
         "orchestrator_next": next_node,
         "context_tags": context_tags,
+        "active_skills": get_active_skill_names(context_tags),
         "last_node": "orchestrator",
         "orchestrator_think": think_content,
         "orchestrator_message": message_content,

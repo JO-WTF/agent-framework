@@ -11,7 +11,6 @@ from app.tools.context import get_session_id_from_config_or_context, ensure_sess
 from app.tools.sandbox import (
     SandboxError,
     get_session_sandbox_status,
-    sandbox_enabled,
     start_session_sandbox,
     stop_session_sandbox,
 )
@@ -26,10 +25,7 @@ def _format_status(status: dict[str, str]) -> str:
 async def start_sandbox(config: RunnableConfig = None) -> str:
     get_session_id_from_config_or_context(config)
     logger.info("📦 \033[95m[触发工具: 启动会话沙箱]\033[0m")
-    if not sandbox_enabled():
-        text = "Docker 沙箱未启用。请设置 AGENT_SANDBOX_MODE=docker。"
-        store_tool_result_for_current_session("start_sandbox", text, {"status": "disabled"})
-        return text
+
     try:
         status = start_session_sandbox()
         text = f"会话沙箱已就绪:\n{_format_status(status)}"
@@ -59,10 +55,7 @@ async def sandbox_status(config: RunnableConfig = None) -> str:
 async def stop_sandbox(config: RunnableConfig = None) -> str:
     get_session_id_from_config_or_context(config)
     logger.info("📦 \033[95m[触发工具: 停止会话沙箱]\033[0m")
-    if not sandbox_enabled():
-        text = "Docker 沙箱未启用。"
-        store_tool_result_for_current_session("stop_sandbox", text, {"status": "disabled"})
-        return text
+
     try:
         status = stop_session_sandbox()
         text = f"会话沙箱已停止:\n{_format_status(status)}"

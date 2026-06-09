@@ -8,7 +8,7 @@ from app.config import PROMPTS
 from app.logging_config import logger
 from app.memory.store import save_agent_note, summarize_text
 from app.tools.context import get_session_id_from_config_or_context
-from app.tools.sandbox import run_sandboxed_command, sandbox_enabled
+from app.tools.sandbox import run_sandboxed_command
 from app.tools.storage import store_tool_result_for_current_session
 
 
@@ -29,7 +29,7 @@ async def run_command(command: str, config: RunnableConfig = None) -> str:
             result.append(f"标准输出:\n{out}")
         if err:
             result.append(f"标准错误:\n{err}")
-        if sandbox_enabled() and result_obj.work_dir:
+        if result_obj.work_dir:
             result.append(f"沙箱工作目录:\n{result_obj.work_dir}")
 
         if not result:

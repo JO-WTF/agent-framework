@@ -11,6 +11,7 @@ from app.memory.store import (
     infer_context_tags,
     load_agent_notes,
     load_static_guidelines,
+    load_dynamic_skills,
     normalize_context_tags,
 )
 
@@ -20,6 +21,7 @@ def get_system_prompt(prompt_key: str, context_tags: list[str] | str | None = No
     selected_tags = normalize_context_tags(context_tags)
     static_guidelines = load_static_guidelines(selected_tags)
     agent_notes = load_agent_notes(selected_tags)
+    active_skills = load_dynamic_skills(selected_tags)
     global_prompt = PROMPTS.get("global_context", "").replace("{current_date}", current_date_str)
     specific_prompt = PROMPTS.get(prompt_key, "").replace("{current_date}", current_date_str)
 
@@ -28,6 +30,8 @@ def get_system_prompt(prompt_key: str, context_tags: list[str] | str | None = No
         sections.append("【静态规则（按需加载）】\n" + static_guidelines)
     if agent_notes:
         sections.append(agent_notes)
+    if active_skills:
+        sections.append(active_skills)
     sections.append(global_prompt)
     sections.append(specific_prompt)
     return "\n\n".join(sections).strip()

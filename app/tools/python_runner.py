@@ -8,7 +8,7 @@ from app.config import PROMPTS
 from app.logging_config import logger
 from app.memory.store import save_agent_note, summarize_text
 from app.tools.context import get_session_id_from_config_or_context
-from app.tools.sandbox import run_sandboxed_python, sandbox_enabled
+from app.tools.sandbox import run_sandboxed_python
 from app.tools.storage import store_tool_result_for_current_session
 
 

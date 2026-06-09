@@ -36,45 +36,40 @@ class SandboxError(RuntimeError):
 
 
 def sandbox_mode() -> str:
-    if os.getenv("AGENT_DISABLE_DOCKER_SANDBOX", "").strip().lower() in {"1", "true", "yes"}:
-        return "disabled"
     return "docker"
 
 
 def sandbox_enabled() -> bool:
-    return sandbox_mode() == "docker"
+    return True
 
 
 def get_sandbox_world_state(session_id: str | None) -> dict[str, Any] | None:
-    mode = sandbox_mode()
-    if mode != "docker":
-        return None
-
     if not session_id:
-        return {"mode": mode, "status": "not_started"}
+        return {"mode": "docker", "status": "not_started"}
 
     metadata_path = get_session_dir(session_id) / "sandbox.json"
     if not metadata_path.exists():
-        return {"mode": mode, "status": "not_started"}
+        return {"mode": "docker", "status": "not_started"}
 
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"mode": mode, "status": "metadata_unreadable"}
+        return {"mode": "docker", "status": "metadata_unreadable"}
 
     container = str(metadata.get("container", ""))
     runtime_status = str(metadata.get("status", "unknown"))
     if container and runtime_status != "stopped":
-        running = inspect_container_running(container)
-        if running is True:
-            runtime_status = "running"
-        elif running is False:
-            runtime_status = "stopped"
-        else:
-            runtime_status = "missing"
+        try:
+            running = inspect_container_running(container)
+            if running:
+                runtime_status = "running"
+            else:
+                runtime_status = "stopped"
+        except SandboxError as e:
+            runtime_status = f"unavailable: {str(e)}"
 
     return {
-        "mode": mode,
+        "mode": "docker",
         "status": runtime_status,
         "runtime": str(metadata.get("runtime", "docker")),
         "container": container,
@@ -92,9 +87,16 @@ def inspect_container_running(container_name: str) -> bool | None:
             text=True,
             timeout=10,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    except FileNotFoundError as e:
+        raise SandboxError("Docker CLI command not found. Please make sure Docker is installed and in your PATH.") from e
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise SandboxError(f"Failed to check Docker status: {e}") from e
+
     if process.returncode != 0:
+        err_msg = process.stderr.lower()
+        if "error during connect" in err_msg or "cannot connect to the docker daemon" in err_msg or "daemon" in err_msg:
+            raise SandboxError(f"Docker daemon is not running or unavailable: {process.stderr.strip()}")
+        # Container does not exist
         return None
     return process.stdout.strip().lower() == "true"
 
@@ -105,7 +107,7 @@ class DockerSandboxRuntime:
         image: str | None = None,
         limits: ResourceLimits | None = None,
     ) -> None:
-        self.image = image or os.getenv("AGENT_SANDBOX_IMAGE", "python:3.12-slim")
+        self.image = image or os.getenv("AGENT_SANDBOX_IMAGE", "jupyter/scipy-notebook:latest")
         self.limits = limits or ResourceLimits(
             cpus=os.getenv("AGENT_SANDBOX_CPUS", "2"),
             memory=os.getenv("AGENT_SANDBOX_MEMORY", "2g"),
@@ -118,10 +120,17 @@ class DockerSandboxRuntime:
         self.shared_mounts = list_shared_mounts(self.session_id)
 
     def run_command(self, command: str) -> SandboxResult:
-        return self._exec(["/bin/sh", "-lc", command])
+        venv_activate_host = self.work_dir / "venv" / "bin" / "activate"
+        if venv_activate_host.exists():
+            wrapped_command = f". /workspace/work/venv/bin/activate && {command}"
+        else:
+            wrapped_command = command
+        return self._exec(["/bin/sh", "-lc", wrapped_command])
 
     def run_python(self, code: str) -> SandboxResult:
-        return self._exec(["python", "-c", code])
+        venv_python_host = self.work_dir / "venv" / "bin" / "python"
+        python_exe = "/workspace/work/venv/bin/python" if venv_python_host.exists() else "python"
+        return self._exec([python_exe, "-c", code])
 
     def _exec(self, container_command: list[str]) -> SandboxResult:
         self.ensure_container()
@@ -155,7 +164,12 @@ class DockerSandboxRuntime:
         )
 
     def ensure_container(self) -> None:
-        status = inspect_container_running(self.container_name)
+        try:
+            status = inspect_container_running(self.container_name)
+        except SandboxError:
+            raise
+        except Exception as e:
+            raise SandboxError(f"检查沙箱状态时发生未知错误: {e}") from e
         
         # Check if the mounts and configuration of the running container match current settings
         config_match = True
@@ -187,13 +201,16 @@ class DockerSandboxRuntime:
         
         # If running but config doesn't match, or stopped: remove it first
         if (status is False) or (status is True and not config_match):
-            subprocess.run(["docker", "rm", "-f", self.container_name], capture_output=True, text=True, timeout=10)
+            try:
+                subprocess.run(["docker", "rm", "-f", self.container_name], capture_output=True, text=True, timeout=10)
+            except Exception:
+                pass
         self._start_container()
         self._write_metadata("running")
 
     def status(self) -> dict[str, Any]:
         metadata = get_sandbox_world_state(self.session_id)
-        return metadata or {"mode": sandbox_mode(), "status": "disabled"}
+        return metadata or {"mode": "docker", "status": "disabled"}
 
     def stop(self) -> dict[str, str]:
         subprocess.run(["docker", "stop", self.container_name], capture_output=True, text=True, timeout=15)
@@ -238,13 +255,20 @@ class DockerSandboxRuntime:
             "trap 'exit 0' TERM; while true; do sleep 3600; done",
         ])
 
-        subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            timeout=self.limits.timeout_seconds,
-            check=True,
-        )
+        try:
+            res = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=self.limits.timeout_seconds,
+            )
+        except FileNotFoundError as e:
+            raise SandboxError("Docker CLI command not found. Please make sure Docker is installed and in your PATH.") from e
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise SandboxError(f"Failed to execute Docker start command: {e}") from e
+
+        if res.returncode != 0:
+            raise SandboxError(f"Failed to start Docker sandbox container (code {res.returncode}): {res.stderr.strip()}")
 
     def _write_metadata(self, status: str) -> None:
         metadata_path = get_session_dir(self.session_id) / "sandbox.json"
@@ -375,22 +399,16 @@ def _is_windows_drive_root(path: Path) -> bool:
 
 
 def start_session_sandbox() -> dict[str, Any]:
-    if not sandbox_enabled():
-        return {"mode": sandbox_mode(), "status": "disabled"}
     runtime = DockerSandboxRuntime()
     runtime.ensure_container()
     return runtime.status()
 
 
 def stop_session_sandbox() -> dict[str, Any]:
-    if not sandbox_enabled():
-        return {"mode": sandbox_mode(), "status": "disabled"}
     return DockerSandboxRuntime().stop()
 
 
 def get_session_sandbox_status() -> dict[str, Any]:
-    if not sandbox_enabled():
-        return {"mode": sandbox_mode(), "status": "disabled"}
     runtime = DockerSandboxRuntime()
     runtime.ensure_container()
     return runtime.status()
@@ -485,12 +503,8 @@ def _resolve_workspace_target(relative_path: str) -> Path:
 
 
 def run_sandboxed_command(command: str) -> SandboxResult:
-    if sandbox_enabled():
-        return DockerSandboxRuntime().run_command(command)
-    raise SandboxError("Docker 沙箱未启用，拒绝在 host 模式执行命令。")
+    return DockerSandboxRuntime().run_command(command)
 
 
 def run_sandboxed_python(code: str) -> SandboxResult:
-    if sandbox_enabled():
-        return DockerSandboxRuntime().run_python(code)
-    raise SandboxError("Docker 沙箱未启用，拒绝在 host 模式执行 Python 代码。")
+    return DockerSandboxRuntime().run_python(code)

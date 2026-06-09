@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from app.runtime_paths import GLOBAL_DATA_DIR, ROOT_DIR, ensure_runtime_dirs, get_session_file_path
 
 STATIC_GUIDELINES_FILE = ROOT_DIR / "STATIC_GUIDELINES.md"
+SKILLS_DIR = ROOT_DIR / "skills"
 GLOBAL_AGENT_MEMORY_FILE = GLOBAL_DATA_DIR / "agent_memory.json"
 
 DEFAULT_MESSAGE_WINDOW = 8
@@ -158,6 +159,102 @@ def load_static_guidelines(context_tags: list[str] | str | None = None, max_sect
     if len(result) > MAX_STATIC_GUIDELINE_CHARS:
         result = result[:MAX_STATIC_GUIDELINE_CHARS] + "\n...（静态规则已按标签筛选并截断）"
     return result
+
+
+def load_dynamic_skills(context_tags: list[str] | str | None = None) -> str:
+    """Scan SKILLS_DIR, parse yaml frontmatter and load skills matching context_tags."""
+    if not SKILLS_DIR.exists() or not SKILLS_DIR.is_dir():
+        return ""
+
+    selected_tags = set(normalize_context_tags(context_tags))
+    if not selected_tags:
+        return ""
+
+    matched_skills = []
+
+    for path in sorted(SKILLS_DIR.glob("*.md")):
+        try:
+            content = path.read_text(encoding="utf-8")
+            if not content.startswith("---"):
+                continue
+
+            parts = content.split("---", 2)
+            if len(parts) < 3:
+                continue
+
+            frontmatter_raw = parts[1]
+            body = parts[2].strip()
+
+            import yaml
+            meta = yaml.safe_load(frontmatter_raw) or {}
+
+            name = meta.get("name") or path.stem
+            description = meta.get("description") or ""
+            tags = meta.get("tags") or []
+            if isinstance(tags, str):
+                tags = [tags]
+            normalized_skill_tags = set(normalize_context_tags(tags))
+
+            if selected_tags.intersection(normalized_skill_tags):
+                matched_skills.append({
+                    "name": name,
+                    "description": description,
+                    "tags": list(normalized_skill_tags),
+                    "body": body
+                })
+        except Exception as e:
+            try:
+                from app.logging_config import logger
+                logger.warning("解析技能文件 %s 失败: %s", path.name, str(e))
+            except Exception:
+                pass
+
+    if not matched_skills:
+        return ""
+
+    lines = ["【活跃技能 SOP（根据上下文自动加载）】"]
+    for skill in matched_skills:
+        tags_str = ", ".join(sorted(skill["tags"]))
+        lines.append(f"#### {skill['name']} - {skill['description']} [标签: {tags_str}]\n{skill['body']}")
+
+    return "\n\n".join(lines).strip()
+
+
+def get_active_skill_names(context_tags: list[str] | str | None = None) -> list[str]:
+    """Scan SKILLS_DIR and return names of skills matching context_tags."""
+    if not SKILLS_DIR.exists() or not SKILLS_DIR.is_dir():
+        return []
+
+    selected_tags = set(normalize_context_tags(context_tags))
+    if not selected_tags:
+        return []
+
+    matched_names = []
+    for path in sorted(SKILLS_DIR.glob("*.md")):
+        try:
+            content = path.read_text(encoding="utf-8")
+            if not content.startswith("---"):
+                continue
+
+            parts = content.split("---", 2)
+            if len(parts) < 3:
+                continue
+
+            frontmatter_raw = parts[1]
+            import yaml
+            meta = yaml.safe_load(frontmatter_raw) or {}
+
+            name = meta.get("name") or path.stem
+            tags = meta.get("tags") or []
+            if isinstance(tags, str):
+                tags = [tags]
+            normalized_skill_tags = set(normalize_context_tags(tags))
+
+            if selected_tags.intersection(normalized_skill_tags):
+                matched_names.append(name)
+        except Exception:
+            pass
+    return matched_names
 
 
 def load_agent_notes(context_tags: list[str] | str | None = None, limit: int = 5) -> str:

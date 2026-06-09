@@ -30,11 +30,16 @@
 | `apply_sandbox_file(source_path, target_path, overwrite=False)` | `app/tools/sandbox_tools.py` | 为 `/workspace/work` 内的单个文件创建写回审批申请，目标支持 `repo://...` 和 `shared://<name>/...`。 |
 | `run_python(code)` | `app/tools/python_runner.py` | 在当前会话 Docker 沙箱中执行 Python 代码。 |
 | `run_command(command)` | `app/tools/command_runner.py` | 在当前会话 Docker 沙箱中执行 shell 命令。 |
+| `save_skill_sop(name, description, tags, instructions)` | `app/tools/skills.py` | 保存或覆盖带 YAML frontmatter 的技能 SOP Markdown 文件。 |
+| `list_skills()` | `app/tools/skills.py` | 列出当前技能库中的 SOP 名称、描述和标签。 |
+| `get_skill_sop(name)` | `app/tools/skills.py` | 读取指定技能 SOP 的完整 Markdown 内容。 |
+| `delete_skill_sop(name)` | `app/tools/skills.py` | 删除指定技能 SOP 文件。 |
+| `curl(url, method="GET", headers=None, data=None)` | `app/tools/curl.py` | 直接调用 HTTP/HTTPS 接口以发送 API 请求，支持 GET/POST/POST JSON 等。 |
 
 `AGENT_TOOLS` 是唯一注册表：
 
 ```python
-AGENT_TOOLS = [search_web, start_sandbox, sandbox_status, stop_sandbox, add_shared_mount, apply_sandbox_file, list_tool_results, read_tool_result, run_python, run_command]
+AGENT_TOOLS = [search_web, start_sandbox, sandbox_status, stop_sandbox, add_shared_mount, apply_sandbox_file, list_tool_results, read_tool_result, run_python, run_command, save_skill_sop, list_skills, delete_skill_sop, get_skill_sop, curl]
 ```
 
 新增工具时至少要改三处：
@@ -191,7 +196,7 @@ read_tool_result(ref_id="tool-0001")
 subprocess.run(command, shell=True, timeout=30)
 ```
 
-这不是系统级沙箱。当前 Agent 命令和 Python 执行默认进入 Docker 会话沙箱；若禁用 Docker 沙箱，会拒绝 host 执行。第一阶段 Docker 会话沙箱路径：
+这不是系统级沙箱。当前 Agent 命令、Python 执行以及网络请求（curl）均必须进入 Docker 会话沙箱，不允许且不提供在宿主机上执行的任何降级通道或开关。第一阶段 Docker 会话沙箱路径：
 
 ```text
 .data/sessions/{session_id}/sandbox_work/shared -> /workspace/work:rw

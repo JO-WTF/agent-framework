@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+# Install system utilities and build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install commonly used python libraries for data science, web scraping, and automation
+RUN pip install --no-cache-dir \
+    requests \
+    httpx \
+    beautifulsoup4 \
+    numpy \
+    pandas \
+    openpyxl \
+    pillow

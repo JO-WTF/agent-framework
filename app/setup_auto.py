@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOGS_DIR = PROJECT_ROOT / "logs"
 STEPS_DIR = LOGS_DIR / "setup-steps"
 PROGRESS_LOG = LOGS_DIR / "setup.log"
-DEFAULT_IMAGE = "python:3.12-slim"
+DEFAULT_IMAGE = "jupyter/scipy-notebook:latest"
 DEFAULT_DOCKER_WAIT_SECONDS = 180
 
 
@@ -24,11 +24,7 @@ def main() -> int:
     print("Agent Framework setup")
     print("---------------------")
 
-    docker_disabled = os.getenv("AGENT_DISABLE_DOCKER_SANDBOX", "").strip().lower() in {"1", "true", "yes"}
-    if docker_disabled:
-        print("Docker sandbox is disabled by AGENT_DISABLE_DOCKER_SANDBOX=true.")
-        write_progress("docker", "skipped", 0, {"reason": "disabled"})
-        return 0
+
 
     platform_info = detect_platform()
     print(f"Platform: {platform_info['platform']}{' (WSL)' if platform_info['is_wsl'] else ''}")

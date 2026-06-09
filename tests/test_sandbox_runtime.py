@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.tools.sandbox import DockerSandboxRuntime, ResourceLimits, add_shared_mount
+from app.tools.sandbox import DockerSandboxRuntime, ResourceLimits, add_shared_mount, SandboxError
 from app.tools.context import set_session_id
 
 
@@ -125,6 +125,28 @@ class DockerSandboxRuntimeTests(unittest.TestCase):
 
         start_args = run_mock.call_args_list[1].args[0]
         self.assertIn(r"C:\Users\alice\Documents\docs:/workspace/shared/docs:ro", start_args)
+
+    def test_docker_cli_missing_raises_sandbox_error(self):
+        # FileNotFoundError mocks missing command
+        with patch("app.tools.sandbox.subprocess.run", side_effect=FileNotFoundError("No such file or directory")):
+            runtime = DockerSandboxRuntime(image="python:3.12-slim")
+            with self.assertRaises(SandboxError) as ctx:
+                runtime.run_command("printf ok")
+            self.assertIn("Docker CLI command not found", str(ctx.exception))
+
+    def test_docker_daemon_down_raises_sandbox_error(self):
+        # subprocess.run returns error during inspect
+        err_res = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="docker: error during connect: Get http://docker/version: dial unix /var/run/docker.sock: connect: no such file or directory"
+        )
+        with patch("app.tools.sandbox.subprocess.run", return_value=err_res):
+            runtime = DockerSandboxRuntime(image="python:3.12-slim")
+            with self.assertRaises(SandboxError) as ctx:
+                runtime.run_command("printf ok")
+            self.assertIn("Docker daemon is not running or unavailable", str(ctx.exception))
 
 
 if __name__ == "__main__":

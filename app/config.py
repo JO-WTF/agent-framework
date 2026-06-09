@@ -27,6 +27,7 @@ class AgentState(TypedDict):
     task_complexity: NotRequired[str]
     todo_list: NotRequired[list[dict[str, Any]]]
     context_tags: NotRequired[list[str]]
+    active_skills: NotRequired[list[str]]
     world_state: NotRequired[dict[str, Any]]
     last_node: NotRequired[str]
     orchestrator_next: NotRequired[str]

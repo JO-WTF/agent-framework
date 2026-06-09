@@ -88,6 +88,7 @@ class ConsoleSession:
             "messages": [],
             "model_config": get_llm_settings(),
             "llm_active_node": None,
+            "active_skills": [],
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -242,6 +243,7 @@ class ConsoleSession:
             "messages": [],
             "model_config": get_llm_settings(),
             "llm_active_node": None,
+            "active_skills": [],
         })
 
     async def refresh_approvals(self) -> None:
@@ -526,6 +528,7 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                     session.state["todo_list"] = next_todo
                     session.state["orchestrator_next"] = next_route
                     session.state["context_tags"] = node_update.get("context_tags", session.state.get("context_tags", ["general"]))
+                    session.state["active_skills"] = node_update.get("active_skills", session.state.get("active_skills", []))
 
                     todo_changed = normalized_json(previous_todo) != normalized_json(next_todo)
                     complexity_changed = previous_complexity != next_complexity

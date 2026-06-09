@@ -450,7 +450,10 @@ function collectRouteTimeline(events) {
       sequence.push("START");
     }
 
-    if (sequence[sequence.length - 1] === targetNode) continue;
+    if (sequence[sequence.length - 1] === targetNode) {
+      eventSteps.set(event.id || `${event.type}-${event.time}`, sequence.length - 1);
+      continue;
+    }
 
     sequence.push(targetNode);
     eventSteps.set(event.id || `${event.type}-${event.time}`, sequence.length - 1);
@@ -502,6 +505,45 @@ function renderEvents(events) {
       `;
     })
     .join("");
+}
+
+function renderWorldStateDiff(currentWS, previousWS) {
+  if (!currentWS || Object.keys(currentWS).length === 0) {
+    return '<div class="empty">无世界状态信息。</div>';
+  }
+  previousWS = previousWS || {};
+
+  const allKeys = Array.from(new Set([...Object.keys(currentWS), ...Object.keys(previousWS)])).sort();
+  let html = '<div class="world-state-diff">';
+
+  for (const key of allKeys) {
+    const prevVal = previousWS[key];
+    const currVal = currentWS[key];
+
+    if (prevVal === undefined) {
+      // Added
+      html += `<div class="diff-line added">🟢 <strong>${escapeHtml(key)}</strong>: <pre class="diff-val">${escapeHtml(JSON.stringify(currVal, null, 2))}</pre></div>`;
+    } else if (currVal === undefined) {
+      // Deleted
+      html += `<div class="diff-line deleted">🔴 <strong>${escapeHtml(key)}</strong>: <pre class="diff-val">${escapeHtml(JSON.stringify(prevVal, null, 2))}</pre></div>`;
+    } else if (JSON.stringify(prevVal) !== JSON.stringify(currVal)) {
+      // Modified
+      html += `<div class="diff-line modified">
+        🟡 <strong>${escapeHtml(key)}</strong>:
+        <div class="diff-split">
+          <span class="diff-old">${escapeHtml(JSON.stringify(prevVal, null, 2))}</span>
+          &rarr;
+          <span class="diff-new">${escapeHtml(JSON.stringify(currVal, null, 2))}</span>
+        </div>
+      </div>`;
+    } else {
+      // Unchanged
+      html += `<div class="diff-line unchanged">⚪️ <strong>${escapeHtml(key)}</strong>: <span class="diff-val-compact">${escapeHtml(JSON.stringify(currVal))}</span></div>`;
+    }
+  }
+
+  html += '</div>';
+  return html;
 }
 
 function renderEventDetail(event) {
@@ -584,6 +626,60 @@ function renderEventDetail(event) {
     const messages = update.messages || [];
     const toolCalls = messages.flatMap((message) => message.tool_calls || []);
 
+    const activeSkills = update.active_skills || event.active_skills || (details && details.active_skills) || [];
+    let skillsHtml = "";
+    if (activeSkills.length) {
+      skillsHtml = `
+        <div class="active-skills-container">
+          ${activeSkills.map(s => `
+            <span class="skill-badge">
+              <i class="fa-solid fa-lightbulb"></i> 关联技能 SOP: ${escapeHtml(s)}
+            </span>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    if (nodeName === "memory") {
+      const currentWS = update.world_state;
+      let previousWS = null;
+      if (currentState.events) {
+        const idx = currentState.events.findIndex(e => e.id === event.id);
+        if (idx !== -1) {
+          for (let i = idx - 1; i >= 0; i--) {
+            const ev = currentState.events[i];
+            if (ev.type === "node_update" && (ev.node === "memory" || ev.details?.node === "memory")) {
+              const prevUpdate = ev.details?.update || ev.update || {};
+              if (prevUpdate.world_state) {
+                previousWS = prevUpdate.world_state;
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      const diffHtml = renderWorldStateDiff(currentWS, previousWS);
+      const stateFields = Object.keys(update).filter((key) => key !== "messages" && key !== "world_state");
+
+      return `
+        <div class="detail-grid">
+          <div><span class="detail-label">节点</span><strong>${escapeHtml(nodeName)}</strong></div>
+          <div><span class="detail-label">更新字段</span><strong>${escapeHtml(Object.keys(update).filter(k => k !== "messages").join(", ") || "-")}</strong></div>
+        </div>
+        <div class="detail-block">
+          <div class="detail-label">🧠 世界状态变更 (World State Diff)</div>
+          ${diffHtml}
+        </div>
+        ${stateFields.length ? `
+          <div class="detail-block">
+            <div class="detail-label">其他状态字段</div>
+            <pre class="detail-pre compact">${escapeHtml(JSON.stringify(pickFields(update, stateFields), null, 2))}</pre>
+          </div>
+        ` : ""}
+      `;
+    }
+
     if (nodeName === "orchestrator" || nodeName === "evaluate") {
       const llmPrefix = nodeName === "orchestrator" ? "orchestrator" : "evaluator";
       const thinkKey = `${llmPrefix}_think`;
@@ -592,8 +688,32 @@ function renderEventDetail(event) {
       const think = update[thinkKey] || "";
       const msg = update[messageKey] || "";
       const prompt = update[promptKey] || [];
-      const stateFields = Object.keys(update).filter((key) => key !== "messages" && key !== thinkKey && key !== messageKey && key !== promptKey);
+      const stateFields = Object.keys(update).filter((key) => key !== "messages" && key !== thinkKey && key !== messageKey && key !== promptKey && key !== "active_skills");
+
+      const currentFieldsObj = pickFields(update, stateFields);
+      let previousFieldsObj = {};
+      if (currentState.events) {
+        const idx = currentState.events.findIndex(e => e.id === event.id);
+        if (idx !== -1) {
+          for (const key of stateFields) {
+            for (let i = idx - 1; i >= 0; i--) {
+              const ev = currentState.events[i];
+              const evNode = ev.node || ev.details?.node;
+              if (ev.type === "node_update" && evNode === nodeName) {
+                const prevUpdate = ev.details?.update || ev.update || {};
+                if (prevUpdate[key] !== undefined) {
+                  previousFieldsObj[key] = prevUpdate[key];
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      const diffHtml = renderWorldStateDiff(currentFieldsObj, previousFieldsObj);
+
       return `
+        ${skillsHtml}
         <div class="detail-grid">
           <div><span class="detail-label">节点</span><strong>${escapeHtml(nodeName)}</strong></div>
           <div><span class="detail-label">更新字段</span><strong>${escapeHtml(Object.keys(update).filter(k => k !== "messages").join(", ") || "-")}</strong></div>
@@ -628,8 +748,8 @@ function renderEventDetail(event) {
         ` : ""}
         ${stateFields.length ? `
           <div class="detail-block">
-            <div class="detail-label">状态字段更新</div>
-            <pre class="detail-pre compact">${escapeHtml(JSON.stringify(pickFields(update, stateFields), null, 2))}</pre>
+            <div class="detail-label">🧠 状态字段变更 (State Fields Diff)</div>
+            ${diffHtml}
           </div>
         ` : ""}
       `;
@@ -638,6 +758,8 @@ function renderEventDetail(event) {
     if (nodeName === "agent") {
       const llmRun = details.llm_run || null;
       const stateFields = Object.keys(update).filter((key) => key !== "messages");
+
+      let skillsPrependedHtml = skillsHtml;
       
       let llmHtml = "";
       if (llmRun) {
@@ -686,6 +808,7 @@ function renderEventDetail(event) {
       }
       
       return `
+        ${skillsPrependedHtml}
         <div class="detail-grid">
           <div><span class="detail-label">节点</span><strong>${escapeHtml(nodeName)}</strong></div>
           ${stateFields.length ? `<div><span class="detail-label">更新字段</span><strong>${escapeHtml(stateFields.join(", ") || "messages")}</strong></div>` : ""}

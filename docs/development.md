@@ -63,8 +63,7 @@ TAVILY_API_KEY=...
 | `LLM_TEMPERATURE` | 温度，默认 `0.1`。 |
 | `TAVILY_API_KEY` | Tavily 搜索 API key。 |
 | `MAX_CONTEXT_SIZE_KB` | 最大上下文序列化大小，默认 512。 |
-| `AGENT_DISABLE_DOCKER_SANDBOX` | 默认不设置。设为 `true` 会禁用 Docker 沙箱，并拒绝 Agent 的命令/Python 执行。 |
-| `AGENT_SANDBOX_IMAGE` | Docker 沙箱镜像，默认 `python:3.12-slim`。 |
+| `AGENT_SANDBOX_IMAGE` | Docker 沙箱镜像，默认 `jupyter/scipy-notebook:latest`。 |
 | `AGENT_SANDBOX_CPUS` | Docker 沙箱 CPU 限制，默认 `2`。 |
 | `AGENT_SANDBOX_MEMORY` | Docker 沙箱内存限制，默认 `2g`。 |
 | `AGENT_SANDBOX_TIMEOUT` | Docker 沙箱超时秒数，默认 `30`。 |
@@ -109,7 +108,7 @@ Agent 可用的沙箱控制工具：
 启用方式：
 
 ```bash
-AGENT_SANDBOX_IMAGE=python:3.12-slim
+AGENT_SANDBOX_IMAGE=jupyter/scipy-notebook:latest
 ```
 
 Windows 原生 PowerShell 示例：
