@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel
 
 from app.cli import build_agent_graph
+from app.llm_streaming import extract_thinking_and_content
 from app.memory.store import append_session_event, trim_messages
 from app.runtime_paths import STATIC_DIR
 from app.tools.approvals import approve_pending_approval, list_approvals, list_pending_approvals, reject_approval
@@ -111,7 +112,7 @@ class ConsoleSession:
         append_session_event(self.session_id, event)
         await self.broadcast(event)
 
-    async def update_node_llm_run(self, token: str) -> None:
+    async def update_node_llm_run(self, token: str, token_type: str = "content") -> None:
         now = datetime.now().strftime("%H:%M:%S")
         events = self.state["events"]
         last_event = events[-1] if events else None
@@ -119,14 +120,19 @@ class ConsoleSession:
         if last_event and last_event.get("type") == "node_update" and last_event.get("node") == "agent":
             details = last_event.setdefault("details", {})
             llm_run = details.setdefault("llm_run", {})
-            content = f"{llm_run.get('content', '')}{token}"
+            raw_segment = f"<think>{token}</think>" if token_type == "thinking" else token
+            content = f"{llm_run.get('content', '')}{raw_segment}"
             llm_run["content"] = content
             llm_run["token_count"] = llm_run.get("token_count", 0) + 1
 
-            # Parse think and message
-            think, message = parse_thinking_content(content)
-            llm_run["think"] = think
-            llm_run["message"] = message
+            if token_type == "thinking":
+                llm_run["think"] = f"{llm_run.get('think', '')}{token}"
+            elif llm_run.get("think"):
+                llm_run["message"] = f"{llm_run.get('message', '')}{token}"
+            else:
+                think, message = parse_thinking_content(content)
+                llm_run["think"] = think
+                llm_run["message"] = message
 
             last_event["title"] = f"节点更新: agent (正在调用模型, {llm_run['token_count']} tokens)"
             last_event["updated_at"] = now
@@ -224,10 +230,16 @@ class WebConsoleCallback(AsyncCallbackHandler):
         await self.session.start_node_llm_run("agent", prompts)
 
     async def on_llm_new_token(self, token: str, **kwargs) -> None:
-        if not token:
-            return
-        self.session.state["model_output"] += token
-        await self.session.update_node_llm_run(token)
+        thinking, content = extract_thinking_and_content(kwargs.get("chunk"))
+        text = content or token
+
+        if thinking:
+            self.session.state["model_output"] += f"<think>{thinking}</think>"
+            await self.session.update_node_llm_run(thinking, token_type="thinking")
+
+        if text:
+            self.session.state["model_output"] += text
+            await self.session.update_node_llm_run(text)
 
     async def on_llm_end(self, response, **kwargs):
         await self.session.complete_node_llm_run()

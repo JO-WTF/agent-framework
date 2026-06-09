@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.callbacks import AsyncCallbackHandler
 from langgraph.graph.message import add_messages
 from app.runtime_paths import CONFIG_DIR
+from app.llm_streaming import extract_thinking_and_content
 
 # 加载外挂配置
 load_dotenv()
@@ -39,8 +40,14 @@ class StreamingConsoleCallback(AsyncCallbackHandler):
         sys.stdout.write("\n🤖 \033[95m[思考中...]\033[0m ")
         sys.stdout.flush()
     async def on_llm_new_token(self, token: str, **kwargs) -> None:
-        if token:
-            sys.stdout.write(token)
+        thinking, content = extract_thinking_and_content(kwargs.get("chunk"))
+        if thinking:
+            sys.stdout.write(f"\033[90m{thinking}\033[0m")
+            sys.stdout.flush()
+
+        text = content or token
+        if text:
+            sys.stdout.write(text)
             sys.stdout.flush()
     async def on_llm_end(self, response, **kwargs):
         sys.stdout.write("\n" + "-"*40 + "\n")
