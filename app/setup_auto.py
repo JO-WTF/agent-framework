@@ -24,8 +24,6 @@ def main() -> int:
     print("Agent Framework setup")
     print("---------------------")
 
-
-
     platform_info = detect_platform()
     print(f"Platform: {platform_info['platform']}{' (WSL)' if platform_info['is_wsl'] else ''}")
 
@@ -83,14 +81,46 @@ def ensure_docker(platform_info: dict[str, object]) -> bool:
 
     check = run_logged(["docker", "version"], raw_log)
     if check.returncode != 0:
-        write_progress("docker", "daemon_unavailable", start, fields | {"raw": relative(raw_log)})
-        print("Docker CLI is installed, but the Docker daemon is not available.")
-        print_docker_instructions(platform_info)
-        return False
+        if try_start_docker_daemon(platform_info) and wait_for_docker_daemon(platform_info):
+            check = run_logged(["docker", "version"], raw_log, append=True)
+        if check.returncode != 0:
+            write_progress("docker", "daemon_unavailable", start, fields | {"raw": relative(raw_log)})
+            print("Docker CLI is installed, but the Docker daemon is not available.")
+            print_docker_instructions(platform_info)
+            return False
 
     write_progress("docker", "success", start, fields | {"raw": relative(raw_log)})
     print("Docker is ready.")
     return True
+
+
+def try_start_docker_daemon(platform_info: dict[str, object]) -> bool:
+    system = platform_info["platform"]
+    if platform_info["is_wsl"]:
+        return False
+    if system == "darwin":
+        return subprocess.run(["open", "-a", "Docker"], capture_output=True).returncode == 0
+    if system == "windows":
+        candidates = [
+            Path(os.getenv("ProgramFiles", "C:/Program Files")) / "Docker" / "Docker" / "Docker Desktop.exe",
+            Path(os.getenv("LOCALAPPDATA", "")) / "Docker" / "Docker Desktop.exe",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return subprocess.run([str(candidate)], capture_output=True).returncode == 0
+        return False
+    if system == "linux":
+        if shutil.which("systemctl"):
+            command = ["systemctl", "start", "docker"]
+            if os.geteuid() != 0 and shutil.which("sudo"):
+                command.insert(0, "sudo")
+            return subprocess.run(command, capture_output=True).returncode == 0
+        if shutil.which("service"):
+            command = ["service", "docker", "start"]
+            if os.geteuid() != 0 and shutil.which("sudo"):
+                command.insert(0, "sudo")
+            return subprocess.run(command, capture_output=True).returncode == 0
+    return False
 
 
 def wait_for_docker_daemon(platform_info: dict[str, object]) -> bool:
@@ -152,7 +182,8 @@ def run_install_docker() -> bool:
     system = platform.system().lower()
     if system == "windows":
         script = PROJECT_ROOT / "scripts" / "install-docker.ps1"
-        command = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script)]
+        shell = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+        command = [shell, "-ExecutionPolicy", "Bypass", "-File", str(script)]
         raw_log = STEPS_DIR / "02-install-docker.log"
         start = time.time()
         result = run_logged(command, raw_log)
@@ -192,8 +223,10 @@ def run_install_docker_darwin() -> bool:
         dmg_path = Path("/tmp/Docker.dmg")
         start = time.time()
         print(f"Downloading Docker DMG from {dmg_url}...")
-        # Use curl -L -C - to allow resuming downloads on unstable networks
-        download_res = subprocess.run(["curl", "-L", "-C", "-", dmg_url, "-o", str(dmg_path)])
+        # Use curl -fL --retry and -C - to handle transient network failures and resume downloads.
+        download_res = subprocess.run(
+            ["curl", "-fL", "--retry", "5", "--retry-delay", "2", "-C", "-", dmg_url, "-o", str(dmg_path)]
+        )
         if download_res.returncode != 0:
             print("Failed to download Docker DMG. You can run setup again to resume the download.")
             write_progress("install-docker", "failed", start, {"method": "official", "reason": "download_failed"})
@@ -209,9 +242,16 @@ def run_install_docker_darwin() -> bool:
             return False
 
         print("Running official installer (this will request sudo privileges for installation)...")
-        username = os.getenv("USER") or "zhaoyu"
-        install_res = subprocess.run(["sudo", "/Volumes/Docker/Docker.app/Contents/MacOS/install", "--accept-license", f"--user={username}"])
-        
+        username = os.getenv("USER") or os.getenv("USERNAME") or ""
+        install_command = [
+            "sudo",
+            "/Volumes/Docker/Docker.app/Contents/MacOS/install",
+            "--accept-license",
+        ]
+        if username:
+            install_command.append(f"--user={username}")
+        install_res = subprocess.run(install_command)
+
         print("Detaching Docker DMG...")
         subprocess.run(["hdiutil", "detach", "/Volumes/Docker"], capture_output=True)
 
@@ -313,12 +353,17 @@ def run_logged(command: list[str], raw_log: Path, append: bool = False) -> subpr
 
 
 def prompt_yes_no(question: str, default: bool) -> bool:
-    if os.getenv("AGENT_SETUP_ASSUME_YES", "").strip().lower() in {"1", "true", "yes"}:
+    assume = os.getenv("AGENT_SETUP_ASSUME_YES", "").strip().lower()
+    if assume in {"1", "true", "yes", "y"}:
+        print(f"{question} -> yes (AGENT_SETUP_ASSUME_YES)")
         return True
+    if assume in {"0", "false", "no", "n"}:
+        print(f"{question} -> no (AGENT_SETUP_ASSUME_YES)")
+        return False
     if not sys.stdin.isatty():
         print(f"{question} {'[Y/n]' if default else '[y/N]'}")
-        print("Non-interactive terminal; refusing to proceed without explicit user confirmation.")
-        return False
+        print(f"Non-interactive terminal; using default answer: {'yes' if default else 'no'}.")
+        return default
     suffix = "[Y/n]" if default else "[y/N]"
     answer = input(f"{question} {suffix} ").strip().lower()
     if not answer:
