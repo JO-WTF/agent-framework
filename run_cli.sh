@@ -3,17 +3,25 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Keep CLI first-run behavior one-command as well: prepare Python deps and the
+# Docker sandbox image before entering the app. Set AGENT_SKIP_SETUP=1 to skip.
+export AGENT_SETUP_ASSUME_YES="${AGENT_SETUP_ASSUME_YES:-1}"
+
 if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+  "${VIRTUAL_ENV}/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+  "${VIRTUAL_ENV}/bin/python" -m pip install --upgrade pip setuptools wheel
+  "${VIRTUAL_ENV}/bin/python" -m pip install -r requirements.txt
+  if [[ "${AGENT_SKIP_SETUP:-0}" != "1" ]]; then
+    "${VIRTUAL_ENV}/bin/python" -m app.setup_auto
+  fi
   exec "${VIRTUAL_ENV}/bin/python" -m app.cli "$@"
 fi
 
-if [[ -x ".venv/bin/python" ]]; then
-  exec .venv/bin/python -m app.cli "$@"
-fi
+# shellcheck source=scripts/bootstrap-env.sh
+source "scripts/bootstrap-env.sh"
+bootstrap_python_env
 
-if command -v uv >/dev/null 2>&1; then
-  exec uv run --with-requirements requirements.txt python -m app.cli "$@"
+if [[ "${AGENT_SKIP_SETUP:-0}" != "1" ]]; then
+  .venv/bin/python -m app.setup_auto
 fi
-
-echo "No Python environment found. Create one with 'uv venv && uv pip install -r requirements.txt' or 'python -m venv .venv && .venv/bin/pip install -r requirements.txt'." >&2
-exit 1
+exec .venv/bin/python -m app.cli "$@"

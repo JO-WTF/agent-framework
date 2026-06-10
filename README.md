@@ -35,13 +35,7 @@
 
 ## 运行
 
-1. 安装依赖：
-
-```bash
-pip install -r requirements.txt
-```
-
-2. 配置 `.env`，至少设置：
+1. 配置 `.env`，至少设置：
 
 ```bash
 LLM_PROVIDER=openai
@@ -50,17 +44,20 @@ LLM_API_KEY=...
 TAVILY_API_KEY=...
 ```
 
-3. 启动 CLI：
+2. 一键启动 CLI 或 Web 控制台：
 
 ```bash
 ./run_cli.sh
-```
-
-4. 启动 Web 控制台：
-
-```bash
 ./run_web.sh
 ```
+
+首次运行时，启动脚本会自动检查/安装系统 Python（Linux/macOS）、创建或修复 `.venv`、升级 `pip/setuptools/wheel`、安装 `requirements.txt`，并调用 `app.setup_auto` 准备 Docker 与默认沙箱镜像。Windows 用户使用 PowerShell 运行：
+
+```powershell
+.\run_web.ps1
+```
+
+默认的一键部署模式会设置 `AGENT_SETUP_ASSUME_YES=1`，从而在非交互终端自动拉取镜像/安装 Docker。需要手动确认时可显式设置 `AGENT_SETUP_ASSUME_YES=0`；只想跳过 CLI 启动前的 Docker/镜像准备时可设置 `AGENT_SKIP_SETUP=1 ./run_cli.sh`。Web 监听地址可用 `AGENT_WEB_HOST` 和 `AGENT_WEB_PORT` 覆盖。
 
 ## 测试
 
