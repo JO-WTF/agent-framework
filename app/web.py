@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -637,17 +637,20 @@ async def get_model_config():
 
 
 def mapbox_browser_token() -> str:
-    public_token = os.getenv("MAPBOX_PUBLIC_TOKEN") or ""
+    public_token = (os.getenv("MAPBOX_PUBLIC_TOKEN") or "").strip()
     if public_token:
         return public_token
-    fallback = os.getenv("MAPBOX_ACCESS_TOKEN") or os.getenv("MAPBOX_API_KEY") or ""
+    fallback = (os.getenv("MAPBOX_ACCESS_TOKEN") or os.getenv("MAPBOX_API_KEY") or "").strip()
     return fallback if fallback.startswith("pk.") else ""
 
 
 @app.get("/api/mapbox-config")
 async def get_mapbox_config():
     token = mapbox_browser_token()
-    return {"configured": bool(token), "token": token}
+    return JSONResponse(
+        {"configured": bool(token), "token": token},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/state")

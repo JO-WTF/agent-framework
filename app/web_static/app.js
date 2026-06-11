@@ -70,6 +70,7 @@ function getSessionId() {
 
 const sessionId = getSessionId();
 let mapboxConfigPromise;
+let lastRenderedMessagesSignature = "";
 
 const expandedEvents = new Set();
 const ROUTE_GROUPS = [
@@ -412,9 +413,21 @@ function renderAssistantMarkdown(content) {
 
 function mapboxConfig() {
   if (!mapboxConfigPromise) {
-    mapboxConfigPromise = fetch(`/api/mapbox-config?session_id=${encodeURIComponent(sessionId)}`, { headers: sessionHeaders() })
+    mapboxConfigPromise = fetch(`/api/mapbox-config?session_id=${encodeURIComponent(sessionId)}`, {
+      headers: sessionHeaders(),
+      cache: "no-store",
+    })
       .then((response) => response.ok ? response.json() : { configured: false, token: "" })
-      .catch(() => ({ configured: false, token: "" }));
+      .then((config) => {
+        if (!config.configured || !config.token) {
+          mapboxConfigPromise = undefined;
+        }
+        return config;
+      })
+      .catch(() => {
+        mapboxConfigPromise = undefined;
+        return { configured: false, token: "" };
+      });
   }
   return mapboxConfigPromise;
 }
@@ -557,12 +570,18 @@ function initializeMapCards(mapCards) {
 }
 
 function renderMessages(messages, mapCards = []) {
-  if (!messages.length && !(mapCards || []).length) {
+  const safeMessages = Array.isArray(messages) ? messages : [];
+  const safeMapCards = Array.isArray(mapCards) ? mapCards : [];
+  const renderSignature = JSON.stringify({ messages: safeMessages, mapCards: safeMapCards });
+  if (renderSignature === lastRenderedMessagesSignature) return;
+  lastRenderedMessagesSignature = renderSignature;
+
+  if (!safeMessages.length && !safeMapCards.length) {
     els.messageList.innerHTML = `<div class="empty">暂无对话</div>`;
     return;
   }
 
-  const messageHtml = messages
+  const messageHtml = safeMessages
     .map((message) => {
       const role = escapeHtml(message.role || "assistant");
       const rawContent = String(message.content || "");
@@ -572,8 +591,8 @@ function renderMessages(messages, mapCards = []) {
       return `<div class="message ${role}">${content}</div>`;
     })
     .join("");
-  els.messageList.innerHTML = `${messageHtml}${renderMapCards(mapCards)}`;
-  initializeMapCards(mapCards);
+  els.messageList.innerHTML = `${messageHtml}${renderMapCards(safeMapCards)}`;
+  initializeMapCards(safeMapCards);
   els.messageList.scrollTop = els.messageList.scrollHeight;
 }
 

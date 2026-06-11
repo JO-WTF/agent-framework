@@ -77,11 +77,25 @@ class ModelConfigTests(unittest.TestCase):
 
     def test_mapbox_config_endpoint_exposes_public_token_only(self):
         client = TestClient(app)
-        with patch.dict(os.environ, {"MAPBOX_PUBLIC_TOKEN": "pk.public", "MAPBOX_ACCESS_TOKEN": "sk.secret"}, clear=False):
+        env = {"MAPBOX_PUBLIC_TOKEN": "pk.public", "MAPBOX_ACCESS_TOKEN": "sk.secret"}
+        with patch.dict(os.environ, env, clear=False):
             response = client.get("/api/mapbox-config")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"configured": True, "token": "pk.public"})
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_mapbox_config_endpoint_strips_env_token_whitespace(self):
+        client = TestClient(app)
+        env = {
+            "MAPBOX_PUBLIC_TOKEN": "  pk.public-with-whitespace\n",
+            "MAPBOX_ACCESS_TOKEN": "sk.secret",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            response = client.get("/api/mapbox-config")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"configured": True, "token": "pk.public-with-whitespace"})
 
     def test_mapbox_config_endpoint_rejects_non_public_fallback(self):
         client = TestClient(app)
