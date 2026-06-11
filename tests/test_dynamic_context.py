@@ -59,6 +59,22 @@ class DynamicContextTests(unittest.TestCase):
         self.assertIn("file_system", tags)
         self.assertIn("tool_error", tags)
 
+    def test_network_context_is_inferred_from_logistics_messages(self):
+        tags = infer_context_tags_from_state({
+            "messages": [HumanMessage(content="请分析仓库、站点和门店的地图覆盖范围")],
+            "context_tags": ["general"],
+            "todo_list": [],
+        })
+
+        self.assertIn("network", tags)
+
+    def test_network_specialist_prompt_uses_network_context(self):
+        prompt = get_system_prompt("network_specialist_agent", context_tags=["network"])
+
+        self.assertIn("【动态上下文标签】network", prompt)
+        self.assertIn("Network Specialist Agent", prompt)
+        self.assertIn("地图与物流网络分析规范", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

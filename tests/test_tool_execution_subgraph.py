@@ -15,6 +15,19 @@ from app.tools.sandbox import SandboxResult
 
 
 class ToolExecutionSubgraphTests(unittest.IsolatedAsyncioTestCase):
+
+    def test_classify_geocoding_auth_failure_as_terminal(self):
+        status, reason = classify_tool_result("geocode_address", "执行失败: Mapbox API 返回 401: Unauthorized")
+
+        self.assertEqual(status, "terminal_failure")
+        self.assertIn("地理编码服务鉴权或配置失败", reason)
+
+    def test_classify_geocoding_generic_failure_as_retryable(self):
+        status, reason = classify_tool_result("reverse_geocode", "执行失败: 坐标参数无效")
+
+        self.assertEqual(status, "retryable_failure")
+        self.assertIn("地理编码工具执行失败", reason)
+
     async def test_subgraph_executes_tool_and_keeps_internal_messages_private(self):
         with patch(
             "app.tools.command_runner.run_sandboxed_command",

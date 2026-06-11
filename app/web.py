@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import uuid
 from datetime import datetime
@@ -82,10 +83,13 @@ class ConsoleSession:
             "current_node": "",
             "task_complexity": "unknown",
             "todo_list": [],
+            "context_tags": ["general"],
+            "agent_role": "general",
             "model_output": "",
             "tool_runs": [],
             "events": [],
             "messages": [],
+            "map_cards": [],
             "model_config": get_llm_settings(),
             "llm_active_node": None,
             "active_skills": [],
@@ -106,6 +110,17 @@ class ConsoleSession:
         self.state["events"] = self.state["events"][-200:]
         append_session_event(self.session_id, event)
         await self.broadcast(event)
+
+
+    async def add_map_card(self, card: dict[str, Any]) -> None:
+        cards = [c for c in self.state.get("map_cards", []) if c.get("id") != card.get("id")]
+        cards.append(card)
+        self.state["map_cards"] = cards[-50:]
+        await self.publish({
+            "type": "map_card",
+            "title": f"地图卡片: {card.get('title', '地图展示')}",
+            "details": {"card": card},
+        })
 
     async def start_node_llm_run(self, node_name: str, prompts: list[str]) -> None:
         now = datetime.now().strftime("%H:%M:%S")
@@ -145,8 +160,9 @@ class ConsoleSession:
         now = datetime.now().strftime("%H:%M:%S")
         events = self.state["events"]
         last_event = events[-1] if events else None
+        active_node = self.state.get("llm_active_node") or "agent"
 
-        if last_event and last_event.get("type") == "node_update" and last_event.get("node") == "agent":
+        if last_event and last_event.get("type") == "node_update" and last_event.get("node") == active_node:
             details = last_event.setdefault("details", {})
             llm_run = details.setdefault("llm_run", {})
 
@@ -180,7 +196,7 @@ class ConsoleSession:
             llm_run["think"] = think
             llm_run["message"] = message
 
-            last_event["title"] = f"节点更新: agent (正在调用模型, {llm_run['token_count']} tokens)"
+            last_event["title"] = f"节点更新: {active_node} (正在调用模型, {llm_run['token_count']} tokens)"
             last_event["updated_at"] = now
             await self.broadcast(last_event)
 
@@ -188,8 +204,9 @@ class ConsoleSession:
         now = datetime.now().strftime("%H:%M:%S")
         events = self.state["events"]
         last_event = events[-1] if events else None
+        active_node = self.state.get("llm_active_node") or "agent"
 
-        if last_event and last_event.get("type") == "node_update" and last_event.get("node") == "agent":
+        if last_event and last_event.get("type") == "node_update" and last_event.get("node") == active_node:
             details = last_event.setdefault("details", {})
             llm_run = details.setdefault("llm_run", {})
 
@@ -207,7 +224,7 @@ class ConsoleSession:
             llm_run["message"] = message
 
             llm_run["status"] = "completed"
-            last_event["title"] = f"节点更新: agent (模型调用完成, {llm_run.get('token_count', 0)} tokens)"
+            last_event["title"] = f"节点更新: {active_node} (模型调用完成, {llm_run.get('token_count', 0)} tokens)"
             last_event["updated_at"] = now
             await self.broadcast(last_event)
 
@@ -237,10 +254,13 @@ class ConsoleSession:
             "current_node": "",
             "task_complexity": "unknown",
             "todo_list": [],
+            "context_tags": ["general"],
+            "agent_role": "general",
             "model_output": "",
             "tool_runs": [],
             "events": [],
             "messages": [],
+            "map_cards": [],
             "model_config": get_llm_settings(),
             "llm_active_node": None,
             "active_skills": [],
@@ -290,11 +310,12 @@ class WebConsoleCallback(AsyncCallbackHandler):
         self.session = session
 
     async def on_llm_start(self, serialized, prompts, **kwargs):
-        self.session.state["current_node"] = "agent"
+        active_node = self.session.state.get("llm_active_node") or "agent"
+        self.session.state["current_node"] = active_node
         self.session.state["_thinking_field_used"] = False
         if self.session.state["model_output"]:
             self.session.state["model_output"] += "\n\n[[MODEL_OUTPUT_ROUND_BREAK]]\n\n"
-        await self.session.start_node_llm_run("agent", prompts)
+        await self.session.start_node_llm_run(active_node, prompts)
 
     async def on_llm_new_token(self, token: str, **kwargs) -> None:
         thinking, content = extract_thinking_and_content(kwargs.get("chunk"))
@@ -477,6 +498,7 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
         "context_tags": session.state.get("context_tags", ["general"]),
         "world_state": session.state.get("world_state", {}),
         "orchestrator_next": session.state.get("orchestrator_next", "agent"),
+        "agent_role": session.state.get("agent_role", "general"),
     }
     config = {
         "configurable": {
@@ -499,9 +521,9 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                         and last_event.get("node") == node_name):
                     details = last_event.setdefault("details", {})
                     details["update"] = make_json_safe(node_update)
-                    if node_name == "agent" and "llm_run" in details:
+                    if node_name in {"agent", "network_specialist_agent"} and "llm_run" in details:
                         token_count = details["llm_run"].get("token_count", 0)
-                        last_event["title"] = f"节点更新: agent (模型调用完成, {token_count} tokens)"
+                        last_event["title"] = f"节点更新: {node_name} (模型调用完成, {token_count} tokens)"
                     else:
                         last_event["title"] = f"节点更新: {node_name}"
                     last_event["updated_at"] = datetime.now().strftime("%H:%M:%S")
@@ -520,19 +542,23 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                     previous_todo = session.state.get("todo_list", [])
                     previous_complexity = session.state.get("task_complexity", "unknown")
                     previous_next = session.state.get("orchestrator_next", "")
+                    previous_agent_role = session.state.get("agent_role", "general")
                     next_todo = node_update.get("todo_list", [])
                     next_complexity = node_update.get("task_complexity", "unknown")
                     next_route = node_update.get("orchestrator_next", "")
+                    next_agent_role = node_update.get("agent_role", session.state.get("agent_role", "general"))
 
                     session.state["task_complexity"] = node_update.get("task_complexity", "unknown")
                     session.state["todo_list"] = next_todo
                     session.state["orchestrator_next"] = next_route
+                    session.state["agent_role"] = next_agent_role
                     session.state["context_tags"] = node_update.get("context_tags", session.state.get("context_tags", ["general"]))
                     session.state["active_skills"] = node_update.get("active_skills", session.state.get("active_skills", []))
 
                     todo_changed = normalized_json(previous_todo) != normalized_json(next_todo)
                     complexity_changed = previous_complexity != next_complexity
                     route_changed = previous_next != next_route
+                    agent_role_changed = previous_agent_role != next_agent_role
 
                     if todo_changed:
 
@@ -545,10 +571,13 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                                 "previous_task_complexity": previous_complexity,
                                 "orchestrator_next": next_route,
                                 "previous_orchestrator_next": previous_next,
+                                "agent_role": next_agent_role,
+                                "previous_agent_role": previous_agent_role,
                                 "changed": {
                                     "todo_list": todo_changed,
                                     "task_complexity": complexity_changed,
                                     "orchestrator_next": route_changed,
+                                    "agent_role": agent_role_changed,
                                 },
                                 "previous_todo_list": make_json_safe(previous_todo),
                                 "current_todo_list": make_json_safe(session.state["todo_list"]),
@@ -607,6 +636,20 @@ async def get_model_config():
     return get_llm_settings()
 
 
+def mapbox_browser_token() -> str:
+    public_token = os.getenv("MAPBOX_PUBLIC_TOKEN") or ""
+    if public_token:
+        return public_token
+    fallback = os.getenv("MAPBOX_ACCESS_TOKEN") or os.getenv("MAPBOX_API_KEY") or ""
+    return fallback if fallback.startswith("pk.") else ""
+
+
+@app.get("/api/mapbox-config")
+async def get_mapbox_config():
+    token = mapbox_browser_token()
+    return {"configured": bool(token), "token": token}
+
+
 @app.get("/api/state")
 async def get_state(request: Request):
     session_id, session = resolve_session(request)
@@ -639,11 +682,13 @@ async def chat(request: Request, payload: ChatRequest):
         "task_complexity": "unknown",
         "todo_list": [],
         "context_tags": ["general"],
+        "agent_role": "general",
         "world_state": {},
         "model_output": "",
         "tool_runs": [],
         "events": [],
         "messages": [serialize_message(m) for m in session.memory_messages],
+        "map_cards": session.state.get("map_cards", []),
         "model_config": model_config,
         "llm_active_node": None,
     })

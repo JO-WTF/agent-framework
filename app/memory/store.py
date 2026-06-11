@@ -36,6 +36,7 @@ KNOWN_CONTEXT_TAGS = (
     "memory",
     "security",
     "web",
+    "network",
 )
 
 
@@ -88,6 +89,15 @@ def infer_context_tags(text: str = "", source: str = "") -> list[str]:
         "tool_error": ("tool_error", "失败", "error", "exception", "timeout", "报错"),
         "security": ("security", "安全", "permission", "权限", "危险"),
         "web": ("web", "fastapi", "browser", "ui", "网页"),
+        "network": (
+            "map", "geo", "gis", "coordinate", "coordinates", "latitude", "longitude",
+            "lat", "lon", "lng", "geocode", "geojson", "shapefile", "h3", "geohash",
+            "logistics", "warehouse", "site", "station", "depot", "hub", "route",
+            "routing", "delivery", "transport", "distance", "coverage", "facility location",
+            "地图", "经纬度", "坐标", "物流", "仓库", "仓", "站点", "网点", "门店",
+            "配送", "运输", "路线", "路径", "距离", "覆盖", "服务半径", "选址",
+            "分拨", "干线", "支线", "末端", "调拨", "仓网", "网络拓扑",
+        ),
     }
     for tag, keywords in keyword_map.items():
         if any(keyword in haystack for keyword in keywords):

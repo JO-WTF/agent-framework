@@ -155,6 +155,28 @@ class MemoryManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(route_after_memory(tool_output_state), "orchestrator")
         self.assertEqual(route_after_memory(agent_tool_call_state), "tools")
 
+    def test_route_after_memory_uses_network_specialist_role(self):
+        orchestrator_state = {
+            "messages": [HumanMessage(content="请分析仓库和站点覆盖")],
+            "last_node": "orchestrator",
+            "orchestrator_next": "agent",
+            "agent_role": "network",
+        }
+        network_tool_call_state = {
+            "messages": [AIMessage(content="", tool_calls=[{"id": "call-1", "name": "run_python", "args": {}}], id="m1")],
+            "last_node": "network_specialist_agent",
+            "agent_role": "network",
+        }
+        network_final_state = {
+            "messages": [AIMessage(content="阶段结论", id="m2")],
+            "last_node": "network_specialist_agent",
+            "agent_role": "network",
+        }
+
+        self.assertEqual(route_after_memory(orchestrator_state), "network_specialist_agent")
+        self.assertEqual(route_after_memory(network_tool_call_state), "tools")
+        self.assertEqual(route_after_memory(network_final_state), "orchestrator")
+
 
 if __name__ == "__main__":
     unittest.main()

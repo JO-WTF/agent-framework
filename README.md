@@ -27,7 +27,7 @@
 | CLI 入口 | `app/cli.py` | 构建 LangGraph 主图，维护命令行会话记忆。 |
 | Web 控制台 | `app/web.py` / `app/web_static/` | 提供浏览器 UI、WebSocket 事件、停止任务和状态快照。 |
 | Orchestrator | `app/nodes/orchestrator.py` | 判断复杂度、生成/更新分级 todo、识别动态上下文标签。 |
-| Agent Brain | `app/nodes/agent.py` | 注入 prompt、todo 和 world_state，生成回答或 tool calls。 |
+| Agent Brain | `app/nodes/agent.py` | 注入 prompt、todo 和 world_state，生成回答或 tool calls；同时包含 Network Specialist Agent 专门处理地图、物流网络、仓库、站点、路径、覆盖、选址等任务。 |
 | Memory Manager | `app/nodes/memory_manager.py` | 固化 `world_state`、归档早期消息、统一主图路由。 |
 | Tools | `app/tools/` / `app/nodes/tool_execution_subgraph.py` | 执行搜索、Python、命令工具，并处理失败分类、修复和归档。 |
 | Evaluator | `app/nodes/evaluator.py` | 检查最终答复是否满足用户问题和 todo，必要时打回重做。 |
@@ -42,6 +42,11 @@ LLM_PROVIDER=openai
 LLM_MODEL_NAME=gpt-4o-mini
 LLM_API_KEY=...
 TAVILY_API_KEY=...
+# 可选：Network Specialist Agent 地址编码/反编码工具
+MAPBOX_PUBLIC_TOKEN=...  # Web 地图卡片使用（浏览器可见）
+MAPBOX_ACCESS_TOKEN=...  # 可选，地理编码 API 使用
+# 或
+HERE_API_KEY=...
 ```
 
 2. 一键启动 CLI 或 Web 控制台：

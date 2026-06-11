@@ -93,6 +93,9 @@ Web 层设计目标是可观察性。它不改变 Agent 决策，只把节点更
 | `LLM_BASE_URL` | OpenAI-compatible base URL。 |
 | `LLM_TEMPERATURE` | 温度，默认 `0.1`。 |
 | `TAVILY_API_KEY` | Tavily 搜索 key。 |
+| `MAPBOX_PUBLIC_TOKEN` | 可选，Web 对话框 Mapbox 地图卡片使用；该 token 会发送到浏览器，应使用 Mapbox public token。 |
+| `MAPBOX_ACCESS_TOKEN` / `MAPBOX_API_KEY` | 可选，Network Specialist Agent 的 Mapbox 地址编码与反编码 key。只有以 `pk.` 开头时才会作为地图卡片浏览器 token 的 fallback。 |
+| `HERE_API_KEY` / `HERE_APIKEY` | 可选，Network Specialist Agent 的 HERE 地址编码与反编码 key。 |
 | `MAX_CONTEXT_SIZE_KB` | 最大上下文序列化大小，默认 512。 |
 
 ## 4. Prompt 层
@@ -167,3 +170,7 @@ Web 层设计目标是可观察性。它不改变 Agent 决策，只把节点更
 - 缺依赖是否变成外部动作，而不是自动安装。
 - 危险命令修复是否被拒绝。
 - 动态上下文是否按标签懒加载。
+
+## 11. Network Specialist Agent 入口状态
+
+CLI 和 Web 每轮初始化状态时会设置 `agent_role="general"`。当 Orchestrator 识别到地图、物流网络、仓库、站点、路径、配送、覆盖、服务半径、选址或仓网规划任务时，会把 `agent_role` 更新为 `network`，随后 Memory Manager 将下一次 agent 类执行路由到 `network_specialist_agent`。

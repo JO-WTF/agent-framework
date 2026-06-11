@@ -164,3 +164,14 @@ next_node = "evaluate" if default_next == "evaluate" else "agent"
 - 解析失败会保守路由，但不会自动修复 todo JSON。
 - `orchestrator_think` 会尝试提取 provider 的 `reasoning_content` 或 `<think>...</think>`，用于观察，不参与决策。
 - 对简单任务，todo 可以为空；但只要任务涉及多步执行、调研、实现或验证，应生成 todo。
+
+## 11. 专业 Agent 选择
+
+Orchestrator 除了输出 `next` 以外，还会输出 `agent_role`，用于在同一类 `agent` 路由下选择具体执行者：
+
+- `general`：默认通用 Agent，处理普通问答、代码、文档、命令、搜索和其他非专业领域任务。
+- `network`：Network Specialist Agent，处理地图、物流网络、仓库、站点、网点、门店、配送路线、路径距离、覆盖、服务半径、选址和仓网规划任务。
+
+约定：`next` 仍只表达大的流向，保持为 `agent` 或 `evaluate`；`agent_role` 只在 `next="agent"` 时影响 Memory Manager 的具体节点路由。这样可以保持既有通用 Agent 行为不变，同时按领域启用专业 Agent。
+
+当 Orchestrator 选择 `agent_role="network"` 时，`context_tags` 应包含 `network`，以便加载地图与物流网络相关静态规则和专业提示词。

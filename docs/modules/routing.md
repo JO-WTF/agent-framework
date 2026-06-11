@@ -119,3 +119,15 @@ CLI 和 Web 复用同一张图：
 - Tools Node 返回的是 `ToolMessage` 列表，必须保持 `tool_call_id` 与原始 tool call 对齐。
 - Evaluator 打回会新增 `HumanMessage`，这会改变最后消息类型，因此下一轮必须从 Orchestrator 重新开始。
 - Memory Manager 归档历史时要避免保留窗口以 `ToolMessage` 开头，否则会破坏工具调用邻接关系。
+
+## 9. 专业 Agent 路由
+
+主图现在在通用 `agent` 之外增加 `network_specialist_agent` 节点。Orchestrator 仍然只通过 `orchestrator_next` 决定大类流向：`agent` 或 `evaluate`；具体执行节点由 `agent_role` 决定。
+
+Memory Manager 的路由规则是：
+
+- `orchestrator_next="evaluate"` 且最后消息是最终 AI 答复：进入 `evaluate`。
+- `orchestrator_next="agent"` 且 `agent_role="network"`：进入 `network_specialist_agent`。
+- 其他 `agent` 流向：进入通用 `agent`。
+
+`network_specialist_agent` 与通用 `agent` 一样：如果输出 tool calls，则进入 `tools`；如果输出自然语言，则回到 Orchestrator 进行计划更新或质检决策。

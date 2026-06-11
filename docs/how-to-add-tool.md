@@ -50,15 +50,28 @@ async def get_weather(location: str) -> str:
 
 ### 2.2 注册工具
 
-修改 `app/tools/registry.py`：
+修改 `app/tools/registry.py`，优先把工具归入分类：
 
 ```python
 from app.tools.weather import get_weather
 
-AGENT_TOOLS = [search_web, run_python, run_command, get_weather]
+TOOL_CATEGORIES = {
+    "search": [search_web],
+    "execution": [run_python, run_command],
+    "weather": [get_weather],
+    "visualization": [render_map_card],
+}
+
+GENERAL_AGENT_TOOL_CATEGORIES = ("search", "execution", "weather")
+AGENT_TOOLS = 所有分类工具的去重并集
 ```
 
-`AGENT_TOOLS` 是 Brain 绑定工具和工具执行子图查找工具的共同入口。
+工具注册分两层：
+
+- `TOOL_CATEGORIES` 表达工具类别，便于按 Agent 角色控制可用工具。
+- `AGENT_TOOLS` 是工具执行子图查找工具的全量入口，必须包含所有可能被任一 Agent 调用的工具。
+
+如果某个工具只应该给专业 Agent 使用，不要加入通用 Agent 的工具分类集合，只加入对应专业 Agent 的工具集。
 
 ### 2.3 添加 prompt 描述
 
@@ -151,7 +164,8 @@ store_tool_result_for_current_session(tool_name, raw_output, metadata)
 
 - [ ] 工具函数已实现为 async `@tool`。
 - [ ] 工具参数清晰且可 JSON 序列化。
-- [ ] 已注册到 `AGENT_TOOLS`。
+- [ ] 已注册到 `TOOL_CATEGORIES`，并确认需要使用它的角色工具集会包含该分类。
+- [ ] 已确认 `AGENT_TOOLS` 全量并集包含该工具，工具执行子图可以找到它。
 - [ ] 已补 `config/prompts.yaml` 工具描述。
 - [ ] 长输出和错误输出已归档。
 - [ ] 特殊失败已加入 `classify_tool_result()`。

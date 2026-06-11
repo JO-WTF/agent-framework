@@ -9,6 +9,7 @@ from app.config import AgentState, StreamingConsoleCallback
 from app.memory.store import trim_messages
 from app.nodes import (
     agent_reasoning_node,
+    network_specialist_agent_node,
     evaluate_response_node,
     memory_manager_node,
     orchestrator_node,
@@ -30,6 +31,7 @@ def build_agent_graph():
     workflow = StateGraph(AgentState)
     workflow.add_node("orchestrator", orchestrator_node)
     workflow.add_node("agent", agent_reasoning_node)
+    workflow.add_node("network_specialist_agent", network_specialist_agent_node)
     workflow.add_node("tools", tools_execution_node)
     workflow.add_node("memory", memory_manager_node)
     workflow.add_node("evaluate", evaluate_response_node)
@@ -37,11 +39,18 @@ def build_agent_graph():
     workflow.add_edge(START, "orchestrator")
     workflow.add_edge("orchestrator", "memory")
     workflow.add_edge("agent", "memory")
+    workflow.add_edge("network_specialist_agent", "memory")
     workflow.add_edge("tools", "memory")
     workflow.add_conditional_edges(
         "memory",
         route_after_memory,
-        {"agent": "agent", "tools": "tools", "orchestrator": "orchestrator", "evaluate": "evaluate"},
+        {
+            "agent": "agent",
+            "network_specialist_agent": "network_specialist_agent",
+            "tools": "tools",
+            "orchestrator": "orchestrator",
+            "evaluate": "evaluate",
+        },
     )
     workflow.add_conditional_edges("evaluate", route_after_evaluation, {"end": END, "orchestrator": "orchestrator"})
 
@@ -90,6 +99,7 @@ async def main():
             "context_tags": ["general"],
             "world_state": {},
             "orchestrator_next": "agent",
+            "agent_role": "general",
         }
 
         try:

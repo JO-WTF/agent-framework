@@ -122,3 +122,11 @@ Brain 的输出永远先进入 Memory Manager：
 6. Brain 调用更多只读命令读取 `app/nodes/`、`app/tools/`。
 7. 文档更新完成后，Brain 给出最终说明。
 8. Evaluator 检查 todo 是否都完成、回答是否提到实际更新结果。
+
+## 9. Network Specialist Agent
+
+框架保留原有 `Agent Brain` 作为通用执行者，同时新增 `Network Specialist Agent` 作为专业执行节点。通用 Agent 继续处理默认任务；当 Orchestrator 输出 `agent_role="network"` 且下一跳仍为 `agent` 时，Memory Manager 会路由到 Network Specialist Agent。
+
+Network Specialist Agent 复用标准 tool calling、Memory Manager 和 Evaluator 机制，但使用独立的 `network_specialist_agent` prompt，并强制加载 `network` 上下文标签。它专门处理地图、物流网络、仓库、站点、网点、路径、配送、距离、覆盖、服务半径、设施选址和仓网规划等任务。
+
+Network Specialist Agent 绑定 `NETWORK_SPECIALIST_TOOLS`，比通用 Agent 多出 `geo` 分类工具：`geocode_address` 和 `reverse_geocode`，以及 `visualization` 分类工具 `render_map_card`。地理编码工具使用 Mapbox/HERE 进行地址编码和经纬度反编码；`provider="auto"` 时优先使用 `MAPBOX_ACCESS_TOKEN`，否则使用 `HERE_API_KEY`。当分析结果适合空间展示时，Network Specialist Agent 应调用 `render_map_card` 在 Web 对话框中创建地图卡片；如果前端未配置 `MAPBOX_PUBLIC_TOKEN`，卡片会显示配置提示。
