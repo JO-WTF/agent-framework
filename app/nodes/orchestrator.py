@@ -79,17 +79,29 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
             next_node = default_orchestrator_next(state)
         raw_context_tags = parsed.get("context_tags") or initial_context_tags
         context_tags = normalize_context_tags(raw_context_tags if isinstance(raw_context_tags, (list, str)) else initial_context_tags)[:4]
+        agent_role = str(parsed.get("agent_role") or state.get("agent_role") or "general").strip().lower().replace("-", "_")
+        if agent_role not in {"general", "network"}:
+            agent_role = "general"
+        if "network" in context_tags:
+            agent_role = "network"
+        if agent_role == "network" and "network" not in context_tags:
+            context_tags = (["network"] + context_tags)[:4]
     except Exception as exc:
         logger.warning(f"⚠️ \033[93m[Orchestrator]\033[0m JSON 解析失败，使用保守路由。原因: {exc}")
         complexity = state.get("task_complexity", "simple")
         todo_list = state.get("todo_list", [])
         next_node = default_orchestrator_next(state)
         context_tags = initial_context_tags
+        agent_role = state.get("agent_role", "general")
+        if agent_role == "network" and "network" not in context_tags:
+            context_tags = (["network"] + context_tags)[:4]
 
     # Only a final AI reply can be evaluated. A fresh user message, tool result,
     # or AI tool-call must always go back to the agent first.
     default_next = default_orchestrator_next(state)
     next_node = "evaluate" if default_next == "evaluate" else "agent"
+    if next_node == "evaluate":
+        agent_role = state.get("agent_role", agent_role)
 
     if todo_list:
         logger.info("\n".join(["📋 \033[94m[Todo]\033[0m"] + format_todo_items(todo_list)))
@@ -100,6 +112,7 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
         "task_complexity": complexity,
         "todo_list": todo_list,
         "orchestrator_next": next_node,
+        "agent_role": agent_role,
         "context_tags": context_tags,
         "active_skills": get_active_skill_names(context_tags),
         "last_node": "orchestrator",

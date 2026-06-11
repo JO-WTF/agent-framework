@@ -69,6 +69,8 @@ function getSessionId() {
 }
 
 const sessionId = getSessionId();
+let mapboxConfigPromise;
+let lastRenderedMessagesSignature = "";
 
 const expandedEvents = new Set();
 const ROUTE_GROUPS = [
@@ -90,6 +92,9 @@ let currentState = {
   context_tags: ["general"],
   world_state: {},
   messages: [],
+  conversation_turns: [],
+  active_turn_id: null,
+  map_cards: [],
 };
 
 
@@ -261,6 +266,7 @@ function statusLabel(status) {
     tool_end: "Tool 完成",
     tool_error: "Tool 失败",
     tool_message: "Tool 结果",
+    map_card: "地图卡片",
     run_start: "开始",
     run_complete: "完成",
     run_cancelled: "停止",
@@ -406,13 +412,244 @@ function renderAssistantMarkdown(content) {
 }
 
 
-function renderMessages(messages) {
-  if (!messages.length) {
+
+function mapboxConfig() {
+  if (!mapboxConfigPromise) {
+    mapboxConfigPromise = fetch(`/api/mapbox-config?session_id=${encodeURIComponent(sessionId)}`, {
+      headers: sessionHeaders(),
+      cache: "no-store",
+    })
+      .then((response) => response.ok ? response.json() : { configured: false, token: "" })
+      .then((config) => {
+        if (!config.configured || !config.token) {
+          mapboxConfigPromise = undefined;
+        }
+        return config;
+      })
+      .catch(() => {
+        mapboxConfigPromise = undefined;
+        return { configured: false, token: "" };
+      });
+  }
+  return mapboxConfigPromise;
+}
+
+function coordinateLabel(point) {
+  const lat = Number(point.latitude);
+  const lng = Number(point.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "";
+  return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+}
+
+function renderMapCards(mapCards) {
+  const cards = Array.isArray(mapCards) ? mapCards : [];
+  if (!cards.length) return "";
+  return cards.map((card) => {
+    const id = escapeHtml(card.id || crypto.randomUUID?.() || `map-${Math.random()}`);
+    const points = Array.isArray(card.points) ? card.points : [];
+    const lines = Array.isArray(card.lines) ? card.lines : [];
+    return `
+      <div class="message assistant map-card-message">
+        <div class="map-card-header">
+          <div>
+            <div class="map-card-title">🗺️ ${escapeHtml(card.title || "地图展示")}</div>
+            ${card.note ? `<div class="map-card-note">${escapeHtml(card.note)}</div>` : ""}
+          </div>
+          <span class="badge neutral">${points.length} 点 / ${lines.length} 线</span>
+        </div>
+        <div id="${id}" class="map-card-map" data-map-card-id="${escapeHtml(card.id || "")}">正在加载地图...</div>
+        ${points.length ? `
+          <div class="map-card-points">
+            ${points.slice(0, 8).map((point) => `
+              <span title="${escapeHtml(coordinateLabel(point))}">${escapeHtml(point.label || point.id || "点")}</span>
+            `).join("")}
+            ${points.length > 8 ? `<span>+${points.length - 8}</span>` : ""}
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }).join("");
+}
+
+function initializeMapCards(mapCards) {
+  const cards = Array.isArray(mapCards) ? mapCards : [];
+  if (!cards.length) return;
+
+  mapboxConfig().then((config) => {
+    for (const card of cards) {
+      const container = document.querySelector(`[data-map-card-id="${CSS.escape(String(card.id || ""))}"]`);
+      if (!container || container.dataset.initialized === "true") continue;
+      if (!config.configured || !config.token) {
+        container.classList.add("unavailable");
+        container.innerHTML = `
+          <div>
+            <strong>未配置 Mapbox 地图 Token</strong>
+            <p>请在服务端环境变量中设置 <code>MAPBOX_PUBLIC_TOKEN</code>（或 MAPBOX_ACCESS_TOKEN / MAPBOX_API_KEY），然后刷新页面。</p>
+          </div>
+        `;
+        container.dataset.initialized = "true";
+        continue;
+      }
+      if (!window.mapboxgl) {
+        container.classList.add("unavailable");
+        container.textContent = "Mapbox GL JS 加载失败，请检查网络或浏览器控制台。";
+        container.dataset.initialized = "true";
+        continue;
+      }
+      try {
+        window.mapboxgl.accessToken = config.token;
+        const points = Array.isArray(card.points) ? card.points : [];
+        const lines = Array.isArray(card.lines) ? card.lines : [];
+        const center = card.center || points[0] || { latitude: 31.2304, longitude: 121.4737 };
+        const map = new window.mapboxgl.Map({
+          container,
+          style: "mapbox://styles/mapbox/streets-v12",
+          center: [Number(center.longitude), Number(center.latitude)],
+          zoom: Number.isFinite(Number(card.zoom)) ? Number(card.zoom) : 10,
+        });
+        map.addControl(new window.mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+
+        const bounds = new window.mapboxgl.LngLatBounds();
+        let hasBounds = false;
+        for (const point of points) {
+          const lat = Number(point.latitude);
+          const lng = Number(point.longitude);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+          const popupHtml = `
+            <strong>${escapeHtml(point.label || point.id || "点")}</strong><br/>
+            <span>${escapeHtml(point.description || coordinateLabel(point))}</span>
+          `;
+          new window.mapboxgl.Marker({ color: point.color || "#2563eb" })
+            .setLngLat([lng, lat])
+            .setPopup(new window.mapboxgl.Popup({ offset: 16 }).setHTML(popupHtml))
+            .addTo(map);
+          bounds.extend([lng, lat]);
+          hasBounds = true;
+        }
+
+        map.on("load", () => {
+          lines.forEach((line, index) => {
+            const coordinates = Array.isArray(line.coordinates) ? line.coordinates : [];
+            if (coordinates.length < 2) return;
+            const sourceId = `${card.id || "map"}-line-${index}`;
+            map.addSource(sourceId, {
+              type: "geojson",
+              data: {
+                type: "Feature",
+                properties: { label: line.label || `线路 ${index + 1}` },
+                geometry: { type: "LineString", coordinates },
+              },
+            });
+            map.addLayer({
+              id: sourceId,
+              type: "line",
+              source: sourceId,
+              paint: {
+                "line-color": line.color || "#f97316",
+                "line-width": 4,
+                "line-opacity": 0.82,
+              },
+            });
+            coordinates.forEach((coord) => {
+              if (Array.isArray(coord) && coord.length >= 2) {
+                bounds.extend([Number(coord[0]), Number(coord[1])]);
+                hasBounds = true;
+              }
+            });
+          });
+          if (hasBounds && !Number.isFinite(Number(card.zoom))) {
+            map.fitBounds(bounds, { padding: 48, maxZoom: 13, duration: 0 });
+          }
+        });
+        container.dataset.initialized = "true";
+      } catch (error) {
+        container.classList.add("unavailable");
+        container.textContent = `地图渲染失败：${error.message}`;
+        container.dataset.initialized = "true";
+      }
+    }
+  });
+}
+
+function normalizeConversationCard(card) {
+  if (!card || typeof card !== "object") return null;
+  if (card.type === "map") {
+    return { type: "map", payload: card.payload || card.card || card };
+  }
+  if (Array.isArray(card.points) || Array.isArray(card.lines)) {
+    return { type: "map", payload: card };
+  }
+  return { type: card.type || "unknown", payload: card.payload || card };
+}
+
+function renderConversationCard(card) {
+  const normalized = normalizeConversationCard(card);
+  if (!normalized) return "";
+  if (normalized.type === "map") {
+    return renderMapCards([normalized.payload]);
+  }
+  return `
+    <div class="message assistant generic-card-message">
+      <div class="map-card-header">
+        <div class="map-card-title">${escapeHtml(normalized.type)} 卡片</div>
+      </div>
+      <pre>${escapeHtml(JSON.stringify(normalized.payload, null, 2))}</pre>
+    </div>
+  `;
+}
+
+function mapCardsFromConversationTurns(turns) {
+  return (Array.isArray(turns) ? turns : [])
+    .flatMap((turn) => Array.isArray(turn.cards) ? turn.cards : [])
+    .map(normalizeConversationCard)
+    .filter((card) => card?.type === "map")
+    .map((card) => card.payload);
+}
+
+function renderConversationTurns(turns) {
+  return (Array.isArray(turns) ? turns : []).map((turn) => {
+    const user = turn.user || {};
+    const assistant = turn.assistant || null;
+    const cardHtml = (Array.isArray(turn.cards) ? turn.cards : []).map(renderConversationCard).join("");
+    const userContent = escapeHtml(String(user.content || ""));
+    const assistantHtml = assistant
+      ? `<div class="message assistant">${renderAssistantMarkdown(String(assistant.content || ""))}</div>`
+      : "";
+    return `
+      <div class="conversation-turn" data-turn-id="${escapeHtml(turn.id || "")}">
+        <div class="message user">${userContent}</div>
+        ${assistantHtml}
+        ${cardHtml}
+      </div>
+    `;
+  }).join("");
+}
+
+function renderMessages(messages, mapCards = [], conversationTurns = []) {
+  const safeMessages = Array.isArray(messages) ? messages : [];
+  const safeMapCards = Array.isArray(mapCards) ? mapCards : [];
+  const safeConversationTurns = Array.isArray(conversationTurns) ? conversationTurns : [];
+  const renderSignature = JSON.stringify({
+    messages: safeMessages,
+    mapCards: safeMapCards,
+    conversationTurns: safeConversationTurns,
+  });
+  if (renderSignature === lastRenderedMessagesSignature) return;
+  lastRenderedMessagesSignature = renderSignature;
+
+  if (safeConversationTurns.length) {
+    els.messageList.innerHTML = renderConversationTurns(safeConversationTurns);
+    initializeMapCards(mapCardsFromConversationTurns(safeConversationTurns));
+    els.messageList.scrollTop = els.messageList.scrollHeight;
+    return;
+  }
+
+  if (!safeMessages.length && !safeMapCards.length) {
     els.messageList.innerHTML = `<div class="empty">暂无对话</div>`;
     return;
   }
 
-  els.messageList.innerHTML = messages
+  const messageHtml = safeMessages
     .map((message) => {
       const role = escapeHtml(message.role || "assistant");
       const rawContent = String(message.content || "");
@@ -422,13 +659,15 @@ function renderMessages(messages) {
       return `<div class="message ${role}">${content}</div>`;
     })
     .join("");
+  els.messageList.innerHTML = `${messageHtml}${renderMapCards(safeMapCards)}`;
+  initializeMapCards(safeMapCards);
   els.messageList.scrollTop = els.messageList.scrollHeight;
 }
 
 function eventRouteNode(event) {
   if (event.type === "run_start") return "orchestrator";
   if (event.type === "node_update") return event.node || event.details?.node || null;
-  if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_error" || event.type === "tool_message") return "tools";
+  if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_error" || event.type === "tool_message" || event.type === "map_card") return "tools";
   if (event.type === "run_complete") return "END";
   return null;
 }
@@ -593,6 +832,18 @@ function renderEventDetail(event) {
     `;
   }
 
+
+  if (type === "map_card") {
+    const card = details.card || {};
+    return `
+      <div class="detail-kv">
+        <div class="detail-kv-row"><span>标题</span><strong>${escapeHtml(card.title || "地图展示")}</strong></div>
+        <div class="detail-kv-row"><span>点</span><strong>${escapeHtml((card.points || []).length)}</strong></div>
+        <div class="detail-kv-row"><span>线</span><strong>${escapeHtml((card.lines || []).length)}</strong></div>
+        <div class="detail-kv-row detail-kv-row-block"><span>卡片 JSON</span><pre class="detail-pre">${escapeHtml(JSON.stringify(card, null, 2))}</pre></div>
+      </div>
+    `;
+  }
 
   if (type.startsWith("tool_")) {
     return `<div class="detail-kv">
@@ -1380,7 +1631,7 @@ function renderState(state) {
   els.modelOutput.innerHTML = renderModelOutput(state.model_output || "");
   els.modelOutput.scrollTop = els.modelOutput.scrollHeight;
 
-  renderMessages(state.messages || []);
+  renderMessages(state.messages || [], state.map_cards || [], state.conversation_turns || []);
   renderEvents(state.events || []);
   renderApprovals(state.world_state?.pending_approvals || []);
   renderTodos(state.todo_list || []);
@@ -1455,6 +1706,12 @@ els.chatForm.addEventListener("submit", async (event) => {
   if (!message) return;
 
   const previousState = currentState;
+  const optimisticTurn = {
+    id: `pending-${Date.now()}`,
+    user: { role: "user", content: message, tool_calls: [] },
+    assistant: null,
+    cards: [],
+  };
   const optimisticState = {
     ...currentState,
     status: "running",
@@ -1470,6 +1727,12 @@ els.chatForm.addEventListener("submit", async (event) => {
       ...(currentState.messages || []),
       { role: "user", content: message, tool_calls: [] },
     ],
+    conversation_turns: [
+      ...(currentState.conversation_turns || []),
+      optimisticTurn,
+    ],
+    active_turn_id: optimisticTurn.id,
+    map_cards: currentState.map_cards || [],
   };
   els.messageInput.value = "";
   renderState(optimisticState);

@@ -205,6 +205,21 @@ CLI 和 Web 每轮都初始化：
 
 如果新增必填状态字段，需要同时更新 CLI、Web、测试和文档。
 
+Web snapshot 还包含展示层状态 `conversation_turns` / `active_turn_id`。它们不参与 LangGraph 决策，只用于把一轮用户输入、最终助手答复和该轮产生的多个通用展示卡片组织在一起：
+
+```json
+{
+  "id": "turn-...",
+  "user": {"role": "user", "content": "..."},
+  "assistant": {"role": "assistant", "content": "..."},
+  "cards": [
+    {"id": "map-...", "type": "map", "payload": {"title": "地图展示", "points": [], "lines": []}}
+  ]
+}
+```
+
+新增图表、表格等卡片时，应继续使用 `cards[].type` 区分渲染器，并把实际数据放入 `cards[].payload`。
+
 ## 10. 修改协议时的检查清单
 
 - [ ] 是否更新 `AgentState`。
@@ -214,3 +229,12 @@ CLI 和 Web 每轮都初始化：
 - [ ] `format_todo_context()` 或 prompt 是否需要展示字段。
 - [ ] 测试是否覆盖默认值和路由。
 - [ ] 文档是否同步更新。
+
+## 11. `agent_role` 字段
+
+`agent_role` 表示 Orchestrator 为下一次 `agent` 类执行选择的具体 Agent 角色：
+
+- `general`：默认值，路由到通用 Agent。
+- `network`：路由到 Network Specialist Agent，用于地图、物流网络、仓库、站点、路径、配送、覆盖、服务半径、选址和仓网规划任务。
+
+该字段不替代 `orchestrator_next`。`orchestrator_next` 仍只表达大类流向：`agent` 或 `evaluate`；`agent_role` 只在流向为 `agent` 时生效。CLI 和 Web 初始化状态都应提供 `agent_role="general"`，Memory Manager 会把当前角色固化到 `world_state["agent_role"]`。

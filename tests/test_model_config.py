@@ -75,6 +75,36 @@ class ModelConfigTests(unittest.TestCase):
         self.assertEqual(payload["default_model_names"]["llamacpp"], "qwen3.6:latest")
         self.assertEqual(payload["default_base_urls"]["llamacpp"], "http://isc.ai.huawei.com:11434/v1")
 
+    def test_mapbox_config_endpoint_exposes_public_token_only(self):
+        client = TestClient(app)
+        env = {"MAPBOX_PUBLIC_TOKEN": "pk.public", "MAPBOX_ACCESS_TOKEN": "sk.secret"}
+        with patch.dict(os.environ, env, clear=False):
+            response = client.get("/api/mapbox-config")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"configured": True, "token": "pk.public"})
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_mapbox_config_endpoint_strips_env_token_whitespace(self):
+        client = TestClient(app)
+        env = {
+            "MAPBOX_PUBLIC_TOKEN": "  pk.public-with-whitespace\n",
+            "MAPBOX_ACCESS_TOKEN": "sk.secret",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            response = client.get("/api/mapbox-config")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"configured": True, "token": "pk.public-with-whitespace"})
+
+    def test_mapbox_config_endpoint_rejects_non_public_fallback(self):
+        client = TestClient(app)
+        with patch.dict(os.environ, {"MAPBOX_PUBLIC_TOKEN": "", "MAPBOX_ACCESS_TOKEN": "sk.secret", "MAPBOX_API_KEY": ""}, clear=False):
+            response = client.get("/api/mapbox-config")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"configured": False, "token": ""})
+
     def test_model_config_endpoint_does_not_accept_server_writes(self):
         client = TestClient(app)
         response = client.post(

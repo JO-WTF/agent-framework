@@ -117,6 +117,8 @@ def get_max_retries(tool_name: str) -> int:
         return 1
     if tool_name == "run_command":
         return 1
+    if tool_name in {"geocode_address", "reverse_geocode"}:
+        return 0
     return 0
 
 
@@ -191,6 +193,14 @@ def classify_tool_result(tool_name: str, result: str) -> tuple[str, str]:
             return "retryable_failure", "命令执行失败，可尝试一次安全参数修复。"
         if any(marker in lower_text for marker in ("command not found", "no such file or directory", "syntax error")):
             return "retryable_failure", "命令输出包含 shell 错误，可尝试一次安全参数修复。"
+        return "success", ""
+
+    if tool_name in {"geocode_address", "reverse_geocode"}:
+        if "执行失败:" in text:
+            terminal_markers = ("未配置", "api key", "apikey", "access token", "unauthorized", "forbidden", "401", "403")
+            if any(marker in lower_text for marker in terminal_markers):
+                return "terminal_failure", "地理编码服务鉴权或配置失败，不能通过改写参数修复。"
+            return "retryable_failure", "地理编码工具执行失败，可检查地址、坐标或 provider 参数。"
         return "success", ""
 
     generic_failure_markers = ("执行失败:", "代码报错:", "搜索失败:", "Traceback", "Exception", "Error:", "错误:", "失败")

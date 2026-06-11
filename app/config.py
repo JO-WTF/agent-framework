@@ -31,6 +31,7 @@ class AgentState(TypedDict):
     world_state: NotRequired[dict[str, Any]]
     last_node: NotRequired[str]
     orchestrator_next: NotRequired[str]
+    agent_role: NotRequired[str]
     orchestrator_think: NotRequired[str]
     orchestrator_message: NotRequired[str]
     orchestrator_prompt: NotRequired[list[dict[str, str]]]

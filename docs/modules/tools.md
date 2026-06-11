@@ -35,18 +35,40 @@
 | `get_skill_sop(name)` | `app/tools/skills.py` | 读取指定技能 SOP 的完整 Markdown 内容。 |
 | `delete_skill_sop(name)` | `app/tools/skills.py` | 删除指定技能 SOP 文件。 |
 | `curl(url, method="GET", headers=None, data=None)` | `app/tools/curl.py` | 直接调用 HTTP/HTTPS 接口以发送 API 请求，支持 GET/POST/POST JSON 等。 |
+| `geocode_address(address, provider="auto", limit=5, country=None, language=None)` | `app/tools/geocoding.py` | 使用 Mapbox 或 HERE 将地址/地点名称转换为经纬度。需要 `MAPBOX_ACCESS_TOKEN` 或 `HERE_API_KEY`。 |
+| `reverse_geocode(latitude, longitude, provider="auto", limit=5, language=None)` | `app/tools/geocoding.py` | 使用 Mapbox 或 HERE 将经纬度转换为地址、地点或行政区信息。需要 `MAPBOX_ACCESS_TOKEN` 或 `HERE_API_KEY`。 |
+| `render_map_card(title, points=None, lines=None, center=None, zoom=None, note=None)` | `app/tools/map_card.py` | 在 Web 对话框中创建 Mapbox 地图卡片；未配置 `MAPBOX_PUBLIC_TOKEN`（或 `pk.` Mapbox token）时卡片显示配置提示。 |
 
-`AGENT_TOOLS` 是唯一注册表：
+工具注册分两层：
 
 ```python
-AGENT_TOOLS = [search_web, start_sandbox, sandbox_status, stop_sandbox, add_shared_mount, apply_sandbox_file, list_tool_results, read_tool_result, run_python, run_command, save_skill_sop, list_skills, delete_skill_sop, get_skill_sop, curl]
+TOOL_CATEGORIES = {
+    "search": [...],
+    "sandbox": [...],
+    "results": [...],
+    "execution": [...],
+    "skills": [...],
+    "geo": [geocode_address, reverse_geocode],
+    "visualization": [render_map_card],
+}
+
+GENERAL_AGENT_TOOLS = tools_for_categories(GENERAL_AGENT_TOOL_CATEGORIES)
+NETWORK_SPECIALIST_TOOLS = tools_for_categories(NETWORK_SPECIALIST_TOOL_CATEGORIES)
+AGENT_TOOLS = 所有分类工具的去重并集
 ```
 
-新增工具时至少要改三处：
+约定：
+
+- `AGENT_TOOLS` 是工具执行子图的全量查找注册表，必须包含所有可执行工具。
+- 各 Agent 绑定工具时应使用角色化工具集，例如通用 Agent 使用 `GENERAL_AGENT_TOOLS`，Network Specialist Agent 使用 `NETWORK_SPECIALIST_TOOLS`。
+- 新增工具时应先归入合适的 `TOOL_CATEGORIES`，再决定哪些角色工具集可以使用它。
+
+新增工具时至少要改四处：
 
 1. 实现 `@tool` 函数。
-2. 加入 `AGENT_TOOLS`。
-3. 在 `config/prompts.yaml` 的 `tools` 下写清楚何时调用。
+2. 加入 `TOOL_CATEGORIES`，并确保需要执行它的角色工具集包含该分类。
+3. 如需被工具执行子图执行，确保它出现在 `AGENT_TOOLS` 全量并集中。
+4. 在 `config/prompts.yaml` 的 `tools` 下写清楚何时调用。
 
 ## 3. 父图 Tools Node
 

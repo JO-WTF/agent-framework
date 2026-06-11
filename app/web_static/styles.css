@@ -1285,3 +1285,83 @@ body.progress-resizing {
   font-size: 10px;
   font-weight: 700;
 }
+
+.map-card-message {
+  width: min(92%, 720px);
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+  border-color: #cfe0ff;
+}
+
+.map-card-header {
+  padding: 11px 12px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #f8fbff, #fff);
+}
+
+.map-card-title {
+  color: #1f2a44;
+  font-weight: 780;
+}
+
+.map-card-note {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.map-card-map {
+  height: 320px;
+  min-height: 260px;
+  background: #eef3fb;
+}
+
+.map-card-map.unavailable {
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #475467;
+  background: repeating-linear-gradient(45deg, #f3f6fb, #f3f6fb 10px, #e9eef7 10px, #e9eef7 20px);
+}
+
+.map-card-map.unavailable p {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.map-card-points {
+  padding: 9px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  background: #fbfcfe;
+}
+
+.map-card-points span {
+  padding: 3px 7px;
+  border: 1px solid #cfe0ff;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.conversation-turn {
+  display: contents;
+}
+
+.generic-card-message pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

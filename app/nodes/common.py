@@ -112,8 +112,7 @@ def summarize_recent_messages(state: dict, limit: int = 8) -> str:
 
 
 def infer_context_tags_from_state(state: dict, fallback: list[str] | str | None = None) -> list[str]:
-    if state.get("context_tags"):
-        return normalize_context_tags(state.get("context_tags"))
+    existing_tags = normalize_context_tags(state.get("context_tags")) if state.get("context_tags") else []
 
     text_parts: list[str] = []
     for message in state.get("messages", [])[-6:]:
@@ -125,9 +124,18 @@ def infer_context_tags_from_state(state: dict, fallback: list[str] | str | None 
         text_parts.append(json.dumps(item, ensure_ascii=False, default=str))
 
     inferred = infer_context_tags("\n".join(text_parts))
-    if inferred == ["general"] and fallback:
-        return normalize_context_tags(fallback)
-    return inferred
+    if inferred == ["general"]:
+        if existing_tags and existing_tags != ["general"]:
+            return existing_tags
+        if fallback:
+            return normalize_context_tags(fallback)
+        return inferred
+
+    merged = [tag for tag in existing_tags if tag != "general"]
+    for tag in inferred:
+        if tag not in merged:
+            merged.append(tag)
+    return normalize_context_tags(merged)
 
 
 def format_available_context_tags() -> str:
