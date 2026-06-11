@@ -205,6 +205,21 @@ CLI 和 Web 每轮都初始化：
 
 如果新增必填状态字段，需要同时更新 CLI、Web、测试和文档。
 
+Web snapshot 还包含展示层状态 `conversation_turns` / `active_turn_id`。它们不参与 LangGraph 决策，只用于把一轮用户输入、最终助手答复和该轮产生的多个通用展示卡片组织在一起：
+
+```json
+{
+  "id": "turn-...",
+  "user": {"role": "user", "content": "..."},
+  "assistant": {"role": "assistant", "content": "..."},
+  "cards": [
+    {"id": "map-...", "type": "map", "payload": {"title": "地图展示", "points": [], "lines": []}}
+  ]
+}
+```
+
+新增图表、表格等卡片时，应继续使用 `cards[].type` 区分渲染器，并把实际数据放入 `cards[].payload`。
+
 ## 10. 修改协议时的检查清单
 
 - [ ] 是否更新 `AgentState`。

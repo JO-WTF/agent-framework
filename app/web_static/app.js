@@ -92,6 +92,8 @@ let currentState = {
   context_tags: ["general"],
   world_state: {},
   messages: [],
+  conversation_turns: [],
+  active_turn_id: null,
   map_cards: [],
 };
 
@@ -569,12 +571,78 @@ function initializeMapCards(mapCards) {
   });
 }
 
-function renderMessages(messages, mapCards = []) {
+function normalizeConversationCard(card) {
+  if (!card || typeof card !== "object") return null;
+  if (card.type === "map") {
+    return { type: "map", payload: card.payload || card.card || card };
+  }
+  if (Array.isArray(card.points) || Array.isArray(card.lines)) {
+    return { type: "map", payload: card };
+  }
+  return { type: card.type || "unknown", payload: card.payload || card };
+}
+
+function renderConversationCard(card) {
+  const normalized = normalizeConversationCard(card);
+  if (!normalized) return "";
+  if (normalized.type === "map") {
+    return renderMapCards([normalized.payload]);
+  }
+  return `
+    <div class="message assistant generic-card-message">
+      <div class="map-card-header">
+        <div class="map-card-title">${escapeHtml(normalized.type)} 卡片</div>
+      </div>
+      <pre>${escapeHtml(JSON.stringify(normalized.payload, null, 2))}</pre>
+    </div>
+  `;
+}
+
+function mapCardsFromConversationTurns(turns) {
+  return (Array.isArray(turns) ? turns : [])
+    .flatMap((turn) => Array.isArray(turn.cards) ? turn.cards : [])
+    .map(normalizeConversationCard)
+    .filter((card) => card?.type === "map")
+    .map((card) => card.payload);
+}
+
+function renderConversationTurns(turns) {
+  return (Array.isArray(turns) ? turns : []).map((turn) => {
+    const user = turn.user || {};
+    const assistant = turn.assistant || null;
+    const cardHtml = (Array.isArray(turn.cards) ? turn.cards : []).map(renderConversationCard).join("");
+    const userContent = escapeHtml(String(user.content || ""));
+    const assistantHtml = assistant
+      ? `<div class="message assistant">${renderAssistantMarkdown(String(assistant.content || ""))}</div>`
+      : "";
+    return `
+      <div class="conversation-turn" data-turn-id="${escapeHtml(turn.id || "")}">
+        <div class="message user">${userContent}</div>
+        ${assistantHtml}
+        ${cardHtml}
+      </div>
+    `;
+  }).join("");
+}
+
+function renderMessages(messages, mapCards = [], conversationTurns = []) {
   const safeMessages = Array.isArray(messages) ? messages : [];
   const safeMapCards = Array.isArray(mapCards) ? mapCards : [];
-  const renderSignature = JSON.stringify({ messages: safeMessages, mapCards: safeMapCards });
+  const safeConversationTurns = Array.isArray(conversationTurns) ? conversationTurns : [];
+  const renderSignature = JSON.stringify({
+    messages: safeMessages,
+    mapCards: safeMapCards,
+    conversationTurns: safeConversationTurns,
+  });
   if (renderSignature === lastRenderedMessagesSignature) return;
   lastRenderedMessagesSignature = renderSignature;
+
+  if (safeConversationTurns.length) {
+    els.messageList.innerHTML = renderConversationTurns(safeConversationTurns);
+    initializeMapCards(mapCardsFromConversationTurns(safeConversationTurns));
+    els.messageList.scrollTop = els.messageList.scrollHeight;
+    return;
+  }
 
   if (!safeMessages.length && !safeMapCards.length) {
     els.messageList.innerHTML = `<div class="empty">暂无对话</div>`;
@@ -1563,7 +1631,7 @@ function renderState(state) {
   els.modelOutput.innerHTML = renderModelOutput(state.model_output || "");
   els.modelOutput.scrollTop = els.modelOutput.scrollHeight;
 
-  renderMessages(state.messages || [], state.map_cards || []);
+  renderMessages(state.messages || [], state.map_cards || [], state.conversation_turns || []);
   renderEvents(state.events || []);
   renderApprovals(state.world_state?.pending_approvals || []);
   renderTodos(state.todo_list || []);
@@ -1638,6 +1706,12 @@ els.chatForm.addEventListener("submit", async (event) => {
   if (!message) return;
 
   const previousState = currentState;
+  const optimisticTurn = {
+    id: `pending-${Date.now()}`,
+    user: { role: "user", content: message, tool_calls: [] },
+    assistant: null,
+    cards: [],
+  };
   const optimisticState = {
     ...currentState,
     status: "running",
@@ -1653,6 +1727,11 @@ els.chatForm.addEventListener("submit", async (event) => {
       ...(currentState.messages || []),
       { role: "user", content: message, tool_calls: [] },
     ],
+    conversation_turns: [
+      ...(currentState.conversation_turns || []),
+      optimisticTurn,
+    ],
+    active_turn_id: optimisticTurn.id,
     map_cards: currentState.map_cards || [],
   };
   els.messageInput.value = "";

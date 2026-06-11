@@ -1355,3 +1355,13 @@ body.progress-resizing {
   font-size: 11px;
   font-weight: 650;
 }
+
+.conversation-turn {
+  display: contents;
+}
+
+.generic-card-message pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
