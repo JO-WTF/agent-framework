@@ -20,6 +20,7 @@ from app.memory.store import append_session_event, trim_messages
 from app.runtime_paths import STATIC_DIR
 from app.tools.approvals import approve_pending_approval, list_approvals, list_pending_approvals, reject_approval
 from app.tools.sandbox import SandboxError
+from app.web_blocks import parse_message_blocks
 
 
 class ChatRequest(BaseModel):
@@ -437,11 +438,15 @@ def serialize_message(message: Any) -> dict[str, Any]:
     elif isinstance(message, ToolMessage):
         role = "tool"
 
-    return {
+    content = getattr(message, "content", "")
+    payload: dict[str, Any] = {
         "role": role,
-        "content": getattr(message, "content", ""),
+        "content": content,
         "tool_calls": getattr(message, "tool_calls", None) or [],
     }
+    if role == "assistant" and isinstance(content, str):
+        payload["blocks"] = parse_message_blocks(content)
+    return payload
 
 
 def make_json_safe(value: Any) -> Any:

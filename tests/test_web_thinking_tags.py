@@ -6,7 +6,9 @@ os.environ.setdefault("LLM_MODEL_NAME", "gpt-4o-mini")
 os.environ.setdefault("LLM_API_KEY", "dummy")
 os.environ.setdefault("TAVILY_API_KEY", "dummy")
 
-from app.web import ConsoleSession, parse_thinking_content
+from langchain_core.messages import AIMessage, HumanMessage
+
+from app.web import ConsoleSession, parse_thinking_content, serialize_message
 
 
 class WebThinkingTagTests(unittest.TestCase):
@@ -35,6 +37,27 @@ class WebThinkingTagTests(unittest.TestCase):
         self.assertEqual(llm_run["think"], "先想")
         self.assertEqual(llm_run["message"], "最终回答")
         self.assertEqual(llm_run["content"], "<think>先想</think>最终回答")
+
+
+class SerializeMessageBlockTests(unittest.TestCase):
+    def test_assistant_message_includes_widget_blocks(self):
+        content = (
+            "雅加达位置：\n"
+            "```widget\n"
+            '{"widget_type": "map", "props": {"zoom": 8}}\n'
+            "```"
+        )
+        payload = serialize_message(AIMessage(content=content))
+
+        self.assertEqual(payload["role"], "assistant")
+        self.assertEqual([b["type"] for b in payload["blocks"]], ["text", "widget"])
+        self.assertEqual(payload["blocks"][1]["widget_type"], "map")
+
+    def test_user_message_has_no_blocks(self):
+        payload = serialize_message(HumanMessage(content="你好"))
+
+        self.assertEqual(payload["role"], "user")
+        self.assertNotIn("blocks", payload)
 
 
 if __name__ == "__main__":

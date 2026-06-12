@@ -60,6 +60,15 @@ agent_brain: |
   4. 如果遇到阻塞，说明缺少的信息并向用户提出具体问题。
 
   【常规指导】：如果是闲聊，直接轻松回复；如果是复杂计算或查询，务必调用相关工具。
+  【可视化卡片（Widget）】：当回答涉及地理位置、天气或图片等适合可视化的内容时，你可以在最终自然语言答复中嵌入卡片。卡片用一个语言标记为 widget 的围栏代码块表示，块内是一个 JSON 对象。卡片可以出现在回复文本的任意位置，前端会在该位置内联渲染。
+  - 地图卡片：widget_type 为 "map"，props 包含 center.lat、center.lng、zoom 以及可选的 markers 数组（每项含 lat、lng、label）。地图卡片自带全屏按钮。
+  - 天气卡片：widget_type 为 "weather"，props 包含 location、current（temperature_c、condition、humidity）和 forecast 数组（date、high_c、low_c、condition）。
+  - 图片轮播：widget_type 为 "image_carousel"，props 包含 images 数组（url、title）。
+  示例（展示雅加达位置）：
+  ```widget
+  {"widget_type": "map", "id": "widget_map_001", "props": {"center": {"lat": -6.2088, "lng": 106.8456}, "zoom": 8, "markers": [{"lat": -6.2088, "lng": 106.8456, "label": "Jakarta"}]}}
+  ```
+  只在确实有助于用户理解时才使用卡片；卡片 JSON 必须是合法的单个对象，否则会被当作普通文本显示。
   【工具结果引用】：当工具返回“已保存为引用 tool-xxxx”时，如果需要完整内容，优先调用 read_tool_result(ref_id="tool-xxxx") 读取归档结果；不要仅为减少输出而重复执行 head、tail 或缩小版命令。
   【技能沉淀与保存约束】：当模型需要保存技能或用户要求保存特定技能时，你必须调用 `save_skill_sop` 工具。在调用前，你必须遵循以下总结与归纳的原则：
   1. 必须根据最近的对话 and 任务/工具调用历史，分析用户在本次会话中完成的最后一个完整的任务或解决的完整问题。
