@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import uuid
 from datetime import datetime
@@ -610,6 +611,12 @@ async def index():
 @app.get("/api/model-config")
 async def get_model_config():
     return get_llm_settings()
+
+
+@app.get("/api/web-config")
+async def get_web_config():
+    """Expose frontend runtime config (e.g. the Mapbox access token)."""
+    return {"mapbox_access_token": os.getenv("MAPBOX_ACCESS_TOKEN", "")}
 
 
 @app.get("/api/state")

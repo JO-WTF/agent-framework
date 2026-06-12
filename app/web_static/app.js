@@ -79,6 +79,8 @@ const ROUTE_GROUPS = [
 let mermaidModulePromise;
 let routeRenderVersion = 0;
 let lastRenderedDefinition = "";
+let mapboxAccessToken = "";
+const pendingMapWidgets = [];
 let currentState = {
   status: "idle",
   current_node: "",
@@ -521,34 +523,67 @@ function renderMapWidget(placeholder, props) {
   mapEl.className = "widget-map";
   body.appendChild(mapEl);
 
-  if (!window.L) {
+  if (!window.mapboxgl) {
     mapEl.textContent = "地图库未加载";
     return;
   }
+
+  const token = props.access_token || mapboxAccessToken;
+  if (!token) {
+    // Token may load asynchronously after the message renders; retry once ready.
+    mapEl.className = "widget-map widget-map-pending";
+    mapEl.textContent = "正在加载地图…（未配置 Mapbox Access Token）";
+    pendingMapWidgets.push(() => {
+      if (mapEl.isConnected && (props.access_token || mapboxAccessToken)) {
+        mapEl.className = "widget-map";
+        mapEl.textContent = "";
+        renderMapInstance(placeholder, mapEl, props);
+      }
+    });
+    return;
+  }
+
+  renderMapInstance(placeholder, mapEl, props);
+}
+
+function renderMapInstance(placeholder, mapEl, props) {
+  mapboxgl.accessToken = props.access_token || mapboxAccessToken;
 
   const center = props.center || {};
   const lat = Number(center.lat ?? 0);
   const lng = Number(center.lng ?? 0);
   const zoom = Number(props.zoom ?? 10);
+  const style = props.style || "mapbox://styles/mapbox/streets-v12";
 
-  const map = L.map(mapEl, { scrollWheelZoom: false }).setView([lat, lng], zoom);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "&copy; OpenStreetMap contributors",
-  }).addTo(map);
+  let map;
+  try {
+    map = new mapboxgl.Map({
+      container: mapEl,
+      style,
+      center: [lng, lat],
+      zoom,
+    });
+  } catch (error) {
+    mapEl.className = "widget-map widget-map-pending";
+    mapEl.textContent = `地图加载失败：${error.message}`;
+    return;
+  }
+
+  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
 
   const markers = Array.isArray(props.markers) ? props.markers : [];
   markers.forEach((marker) => {
     const mLat = Number(marker.lat);
     const mLng = Number(marker.lng);
     if (Number.isNaN(mLat) || Number.isNaN(mLng)) return;
-    const layer = L.marker([mLat, mLng]).addTo(map);
+    const mapMarker = new mapboxgl.Marker().setLngLat([mLng, mLat]);
     if (marker.label) {
-      layer.bindPopup(escapeHtml(String(marker.label)));
+      mapMarker.setPopup(new mapboxgl.Popup({ offset: 24 }).setText(String(marker.label)));
     }
+    mapMarker.addTo(map);
   });
 
-  const refresh = () => map.invalidateSize();
+  const refresh = () => map.resize();
   setTimeout(refresh, 0);
   placeholder.addEventListener("fullscreenchange", () => setTimeout(refresh, 0));
   document.addEventListener("fullscreenchange", refresh);
@@ -1535,6 +1570,28 @@ function saveModelConfig() {
   applyModelConfig(payload, "local");
 }
 
+async function loadWebConfig() {
+  try {
+    const response = await fetch("/api/web-config", { headers: sessionHeaders() });
+    if (!response.ok) return;
+    const config = await response.json();
+    if (typeof config.mapbox_access_token === "string") {
+      mapboxAccessToken = config.mapbox_access_token;
+    }
+  } catch (error) {
+    // Non-fatal: map widgets will show a "token not configured" message.
+  } finally {
+    while (pendingMapWidgets.length) {
+      const retry = pendingMapWidgets.shift();
+      try {
+        retry();
+      } catch (error) {
+        /* ignore individual widget retry failures */
+      }
+    }
+  }
+}
+
 async function loadModelConfig() {
   if (!els.modelConfigForm) return;
   try {
@@ -1813,6 +1870,7 @@ els.eventList.addEventListener("click", (event) => {
 });
 
 initializeProgressSplitResizer();
+loadWebConfig();
 loadModelConfig();
 loadState();
 connectWs();
