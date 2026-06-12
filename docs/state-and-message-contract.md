@@ -185,6 +185,35 @@ Brain 和 Evaluator 都依赖这个结构。不要把 todo 变成自由文本。
 - `pending_approvals` 只保存等待用户处理的会话审批，不写入长期 memory。
 - `last_final_reply` 只保存摘要。
 
+## 8.5 Web 消息块（blocks）协议
+
+Web 控制台采用服务端驱动渲染：`serialize_message()`（`app/web.py`）会把每条 `assistant` 消息的纯文本回复解析为有序的 `blocks` 数组，前端只负责按块类型渲染，卡片因此能够内联在对应那一轮回复的任意位置，而不是堆在对话末尾。
+
+解析逻辑见 `app/web_blocks.py::parse_message_blocks()`。块类型：
+
+```json
+{
+  "role": "assistant",
+  "content": "原始文本（向后兼容保留）",
+  "blocks": [
+    {"type": "text", "format": "markdown", "content": "下面是雅加达的位置："},
+    {
+      "type": "widget",
+      "widget_type": "map",
+      "id": "widget_map_001",
+      "props": {"center": {"lat": -6.2088, "lng": 106.8456}, "zoom": 8, "markers": [{"lat": -6.2088, "lng": 106.8456, "label": "Jakarta"}]}
+    }
+  ]
+}
+```
+
+约定：
+
+- 模型用 ```` ```widget ```` 围栏代码块（块内为单个 JSON 对象）嵌入卡片，围栏之外的内容会成为 `text` 块。
+- `widget_type` 缺失或 JSON 非法时，该围栏块原样保留为 `text`，不会被丢弃。
+- 前端 widget 渲染器注册表见 `app/web_static/app.js`（`WIDGET_RENDERERS`）：内置 `map`（含全屏按钮）、`weather`、`image_carousel`，未知类型回退到通用展示。
+- `content` 字段保留原始文本以保持向后兼容；前端在没有 `blocks` 时回退到旧的 markdown 渲染路径。
+
 ## 9. Entry 初始状态协议
 
 CLI 和 Web 每轮都初始化：

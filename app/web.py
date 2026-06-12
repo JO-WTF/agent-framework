@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import uuid
 from datetime import datetime
@@ -20,6 +21,7 @@ from app.memory.store import append_session_event, trim_messages
 from app.runtime_paths import STATIC_DIR
 from app.tools.approvals import approve_pending_approval, list_approvals, list_pending_approvals, reject_approval
 from app.tools.sandbox import SandboxError
+from app.web_blocks import parse_message_blocks
 
 
 class ChatRequest(BaseModel):
@@ -437,11 +439,15 @@ def serialize_message(message: Any) -> dict[str, Any]:
     elif isinstance(message, ToolMessage):
         role = "tool"
 
-    return {
+    content = getattr(message, "content", "")
+    payload: dict[str, Any] = {
         "role": role,
-        "content": getattr(message, "content", ""),
+        "content": content,
         "tool_calls": getattr(message, "tool_calls", None) or [],
     }
+    if role == "assistant" and isinstance(content, str):
+        payload["blocks"] = parse_message_blocks(content)
+    return payload
 
 
 def make_json_safe(value: Any) -> Any:
@@ -605,6 +611,12 @@ async def index():
 @app.get("/api/model-config")
 async def get_model_config():
     return get_llm_settings()
+
+
+@app.get("/api/web-config")
+async def get_web_config():
+    """Expose frontend runtime config (e.g. the Mapbox access token)."""
+    return {"mapbox_access_token": os.getenv("MAPBOX_ACCESS_TOKEN", "")}
 
 
 @app.get("/api/state")

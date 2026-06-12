@@ -79,6 +79,8 @@ const ROUTE_GROUPS = [
 let mermaidModulePromise;
 let routeRenderVersion = 0;
 let lastRenderedDefinition = "";
+let mapboxAccessToken = "";
+const pendingMapWidgets = [];
 let currentState = {
   status: "idle",
   current_node: "",
@@ -406,7 +408,38 @@ function renderAssistantMarkdown(content) {
 }
 
 
+function messageBlocks(message) {
+  if (Array.isArray(message.blocks) && message.blocks.length) {
+    return message.blocks;
+  }
+  return [{ type: "text", format: "markdown", content: String(message.content || "") }];
+}
+
+function renderAssistantBlocks(blocks) {
+  return blocks
+    .map((block) => {
+      if (block && block.type === "widget") {
+        const config = { widget_type: block.widget_type, id: block.id || "", props: block.props || {} };
+        return `<div class="chat-widget" data-widget="${escapeHtml(JSON.stringify(config))}"></div>`;
+      }
+      const text = String((block && block.content) || "");
+      if (!text.trim()) return "";
+      return `<div class="message-block-text">${renderAssistantMarkdown(text)}</div>`;
+    })
+    .join("");
+}
+
+let lastMessagesSignature = null;
+
 function renderMessages(messages) {
+  const signature = JSON.stringify(
+    messages.map((m) => ({ role: m.role, blocks: m.blocks || null, content: m.content || "" }))
+  );
+  if (signature === lastMessagesSignature) {
+    return;
+  }
+  lastMessagesSignature = signature;
+
   if (!messages.length) {
     els.messageList.innerHTML = `<div class="empty">暂无对话</div>`;
     return;
@@ -415,15 +448,243 @@ function renderMessages(messages) {
   els.messageList.innerHTML = messages
     .map((message) => {
       const role = escapeHtml(message.role || "assistant");
-      const rawContent = String(message.content || "");
-      const content = role === "assistant"
-        ? renderAssistantMarkdown(rawContent)
-        : escapeHtml(rawContent);
-      return `<div class="message ${role}">${content}</div>`;
+      if (role === "assistant") {
+        return `<div class="message ${role}">${renderAssistantBlocks(messageBlocks(message))}</div>`;
+      }
+      return `<div class="message ${role}">${escapeHtml(String(message.content || ""))}</div>`;
     })
     .join("");
+
+  hydrateWidgets(els.messageList);
   els.messageList.scrollTop = els.messageList.scrollHeight;
 }
+
+function hydrateWidgets(root) {
+  root.querySelectorAll(".chat-widget").forEach((placeholder) => {
+    let config;
+    try {
+      config = JSON.parse(placeholder.dataset.widget || "{}");
+    } catch (error) {
+      console.error("Failed to parse widget config", error);
+      return;
+    }
+    const renderer = WIDGET_RENDERERS[config.widget_type] || renderUnknownWidget;
+    try {
+      renderer(placeholder, config.props || {}, config);
+    } catch (error) {
+      console.error(`Failed to render widget "${config.widget_type}"`, error);
+      placeholder.classList.add("chat-widget-error");
+      placeholder.textContent = `无法渲染卡片：${config.widget_type || "unknown"}`;
+    }
+  });
+}
+
+function createWidgetCard(placeholder, { title, icon, fullscreen = false } = {}) {
+  placeholder.classList.add("widget-card");
+  const card = document.createElement("div");
+  card.className = "widget-card-inner";
+
+  const header = document.createElement("div");
+  header.className = "widget-card-header";
+  const titleEl = document.createElement("span");
+  titleEl.className = "widget-card-title";
+  titleEl.innerHTML = `${icon ? `<i class="${icon}"></i> ` : ""}${escapeHtml(title || "")}`;
+  header.appendChild(titleEl);
+
+  const body = document.createElement("div");
+  body.className = "widget-card-body";
+
+  if (fullscreen) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "widget-fullscreen-btn";
+    button.title = "全屏显示";
+    button.setAttribute("aria-label", "全屏显示");
+    button.innerHTML = `<i class="fa-solid fa-expand"></i>`;
+    button.addEventListener("click", () => {
+      if (document.fullscreenElement === placeholder) {
+        document.exitFullscreen?.();
+      } else {
+        placeholder.requestFullscreen?.();
+      }
+    });
+    header.appendChild(button);
+  }
+
+  card.appendChild(header);
+  card.appendChild(body);
+  placeholder.appendChild(card);
+  return { card, header, body };
+}
+
+function renderMapWidget(placeholder, props) {
+  const { body } = createWidgetCard(placeholder, { title: "地图", icon: "fa-solid fa-map-location-dot", fullscreen: true });
+  const mapEl = document.createElement("div");
+  mapEl.className = "widget-map";
+  body.appendChild(mapEl);
+
+  if (!window.mapboxgl) {
+    mapEl.textContent = "地图库未加载";
+    return;
+  }
+
+  const token = props.access_token || mapboxAccessToken;
+  if (!token) {
+    // Token may load asynchronously after the message renders; retry once ready.
+    mapEl.className = "widget-map widget-map-pending";
+    mapEl.textContent = "正在加载地图…（未配置 Mapbox Access Token）";
+    pendingMapWidgets.push(() => {
+      if (mapEl.isConnected && (props.access_token || mapboxAccessToken)) {
+        mapEl.className = "widget-map";
+        mapEl.textContent = "";
+        renderMapInstance(placeholder, mapEl, props);
+      }
+    });
+    return;
+  }
+
+  renderMapInstance(placeholder, mapEl, props);
+}
+
+function renderMapInstance(placeholder, mapEl, props) {
+  mapboxgl.accessToken = props.access_token || mapboxAccessToken;
+
+  const center = props.center || {};
+  const lat = Number(center.lat ?? 0);
+  const lng = Number(center.lng ?? 0);
+  const zoom = Number(props.zoom ?? 10);
+  const style = props.style || "mapbox://styles/mapbox/streets-v12";
+
+  let map;
+  try {
+    map = new mapboxgl.Map({
+      container: mapEl,
+      style,
+      center: [lng, lat],
+      zoom,
+    });
+  } catch (error) {
+    mapEl.className = "widget-map widget-map-pending";
+    mapEl.textContent = `地图加载失败：${error.message}`;
+    return;
+  }
+
+  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+
+  const markers = Array.isArray(props.markers) ? props.markers : [];
+  markers.forEach((marker) => {
+    const mLat = Number(marker.lat);
+    const mLng = Number(marker.lng);
+    if (Number.isNaN(mLat) || Number.isNaN(mLng)) return;
+    const mapMarker = new mapboxgl.Marker().setLngLat([mLng, mLat]);
+    if (marker.label) {
+      mapMarker.setPopup(new mapboxgl.Popup({ offset: 24 }).setText(String(marker.label)));
+    }
+    mapMarker.addTo(map);
+  });
+
+  const refresh = () => map.resize();
+  setTimeout(refresh, 0);
+  placeholder.addEventListener("fullscreenchange", () => setTimeout(refresh, 0));
+  document.addEventListener("fullscreenchange", refresh);
+  if (window.ResizeObserver) {
+    new ResizeObserver(refresh).observe(mapEl);
+  }
+}
+
+function renderWeatherWidget(placeholder, props) {
+  const { body } = createWidgetCard(placeholder, {
+    title: props.location ? `天气 · ${props.location}` : "天气",
+    icon: "fa-solid fa-cloud-sun",
+  });
+  const current = props.current || {};
+  const currentEl = document.createElement("div");
+  currentEl.className = "widget-weather-current";
+  currentEl.innerHTML = `
+    <span class="widget-weather-temp">${escapeHtml(String(current.temperature_c ?? "--"))}°C</span>
+    <span class="widget-weather-meta">
+      <span>${escapeHtml(String(current.condition ?? ""))}</span>
+      ${current.humidity != null ? `<span>湿度 ${escapeHtml(String(current.humidity))}%</span>` : ""}
+    </span>
+  `;
+  body.appendChild(currentEl);
+
+  const forecast = Array.isArray(props.forecast) ? props.forecast : [];
+  if (forecast.length) {
+    const list = document.createElement("div");
+    list.className = "widget-weather-forecast";
+    list.innerHTML = forecast
+      .map(
+        (day) => `
+          <div class="widget-weather-day">
+            <span class="widget-weather-date">${escapeHtml(String(day.date ?? ""))}</span>
+            <span class="widget-weather-cond">${escapeHtml(String(day.condition ?? ""))}</span>
+            <span class="widget-weather-range">${escapeHtml(String(day.high_c ?? "--"))}° / ${escapeHtml(String(day.low_c ?? "--"))}°</span>
+          </div>
+        `
+      )
+      .join("");
+    body.appendChild(list);
+  }
+}
+
+function renderImageCarouselWidget(placeholder, props) {
+  const { body } = createWidgetCard(placeholder, { title: "图片", icon: "fa-solid fa-images", fullscreen: true });
+  const images = (Array.isArray(props.images) ? props.images : []).filter((img) => img && img.url);
+  if (!images.length) {
+    body.textContent = "暂无图片";
+    return;
+  }
+
+  let index = 0;
+  const stage = document.createElement("div");
+  stage.className = "widget-carousel-stage";
+  const img = document.createElement("img");
+  img.className = "widget-carousel-img";
+  img.loading = "lazy";
+  const caption = document.createElement("div");
+  caption.className = "widget-carousel-caption";
+
+  const show = (next) => {
+    index = (next + images.length) % images.length;
+    img.src = images[index].url;
+    img.alt = images[index].title || "";
+    caption.textContent = `${images[index].title || ""} (${index + 1}/${images.length})`;
+  };
+
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "widget-carousel-nav prev";
+  prev.innerHTML = `<i class="fa-solid fa-chevron-left"></i>`;
+  prev.addEventListener("click", () => show(index - 1));
+
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "widget-carousel-nav next";
+  next.innerHTML = `<i class="fa-solid fa-chevron-right"></i>`;
+  next.addEventListener("click", () => show(index + 1));
+
+  stage.appendChild(prev);
+  stage.appendChild(img);
+  stage.appendChild(next);
+  body.appendChild(stage);
+  body.appendChild(caption);
+  show(0);
+}
+
+function renderUnknownWidget(placeholder, props, config) {
+  const { body } = createWidgetCard(placeholder, { title: `未知卡片：${config.widget_type || "unknown"}`, icon: "fa-solid fa-puzzle-piece" });
+  const pre = document.createElement("pre");
+  pre.className = "widget-unknown-json";
+  pre.textContent = JSON.stringify(props, null, 2);
+  body.appendChild(pre);
+}
+
+const WIDGET_RENDERERS = {
+  map: renderMapWidget,
+  weather: renderWeatherWidget,
+  image_carousel: renderImageCarouselWidget,
+};
 
 function eventRouteNode(event) {
   if (event.type === "run_start") return "orchestrator";
@@ -1309,6 +1570,28 @@ function saveModelConfig() {
   applyModelConfig(payload, "local");
 }
 
+async function loadWebConfig() {
+  try {
+    const response = await fetch("/api/web-config", { headers: sessionHeaders() });
+    if (!response.ok) return;
+    const config = await response.json();
+    if (typeof config.mapbox_access_token === "string") {
+      mapboxAccessToken = config.mapbox_access_token;
+    }
+  } catch (error) {
+    // Non-fatal: map widgets will show a "token not configured" message.
+  } finally {
+    while (pendingMapWidgets.length) {
+      const retry = pendingMapWidgets.shift();
+      try {
+        retry();
+      } catch (error) {
+        /* ignore individual widget retry failures */
+      }
+    }
+  }
+}
+
 async function loadModelConfig() {
   if (!els.modelConfigForm) return;
   try {
@@ -1587,6 +1870,7 @@ els.eventList.addEventListener("click", (event) => {
 });
 
 initializeProgressSplitResizer();
+loadWebConfig();
 loadModelConfig();
 loadState();
 connectWs();

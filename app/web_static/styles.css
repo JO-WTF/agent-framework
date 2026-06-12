@@ -1285,3 +1285,220 @@ body.progress-resizing {
   font-size: 10px;
   font-weight: 700;
 }
+
+/* ===== Server-driven chat widgets (map / weather / image carousel) ===== */
+.message.assistant .message-block-text + .chat-widget,
+.message.assistant .chat-widget + .message-block-text,
+.message.assistant .chat-widget + .chat-widget {
+  margin-top: 10px;
+}
+
+.message.assistant .chat-widget.chat-widget-error {
+  padding: 10px 12px;
+  border: 1px solid #f6d99a;
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 13px;
+}
+
+.widget-card {
+  display: block;
+}
+
+.widget-card-inner {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: 0 6px 18px rgba(21, 31, 51, 0.06);
+}
+
+.widget-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.widget-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.widget-card-title i {
+  color: var(--accent);
+}
+
+.widget-fullscreen-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.widget-fullscreen-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.widget-card-body {
+  padding: 10px 12px;
+}
+
+.widget-map {
+  width: 100%;
+  height: 280px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.widget-map-pending {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  text-align: center;
+  color: var(--muted, #94a3b8);
+  background: var(--surface-muted, rgba(148, 163, 184, 0.08));
+  font-size: 13px;
+}
+
+/* When a widget is fullscreen, let the map fill the screen. */
+.widget-card:fullscreen,
+.widget-card:-webkit-full-screen {
+  background: var(--surface);
+  padding: 0;
+}
+
+.widget-card:fullscreen .widget-card-inner,
+.widget-card:-webkit-full-screen .widget-card-inner {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.widget-card:fullscreen .widget-card-body,
+.widget-card:-webkit-full-screen .widget-card-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.widget-card:fullscreen .widget-map,
+.widget-card:-webkit-full-screen .widget-map,
+.widget-card:fullscreen .widget-carousel-stage,
+.widget-card:-webkit-full-screen .widget-carousel-stage {
+  height: 100%;
+}
+
+/* Weather widget */
+.widget-weather-current {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.widget-weather-temp {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.widget-weather-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.widget-weather-forecast {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.widget-weather-day {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.widget-weather-date {
+  color: var(--muted);
+}
+
+.widget-weather-range {
+  font-weight: 600;
+}
+
+/* Image carousel widget */
+.widget-carousel-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 260px;
+  background: #0b1220;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.widget-carousel-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.widget-carousel-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+}
+
+.widget-carousel-nav.prev { left: 8px; }
+.widget-carousel-nav.next { right: 8px; }
+
+.widget-carousel-caption {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.widget-unknown-json {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+  color: var(--text);
+}
