@@ -248,7 +248,7 @@ class ConsoleSession:
 
             last_event["title"] = f"节点更新: {active_node} (正在调用模型, {llm_run['token_count']} tokens)"
             last_event["updated_at"] = now
-            await self.broadcast(last_event)
+            await self.broadcast_stream({"type": "stream", "content": token, "token_type": token_type})
 
     async def complete_node_llm_run(self) -> None:
         now = datetime.now().strftime("%H:%M:%S")
@@ -281,6 +281,16 @@ class ConsoleSession:
     async def set_llm_active(self, node_name: str | None) -> None:
         self.state["llm_active_node"] = node_name
         await self.broadcast({"type": "llm_active_update", "title": "LLM 状态更新", "details": {"active_node": node_name}})
+
+    async def broadcast_stream(self, event: dict[str, Any]) -> None:
+        stale = []
+        for queue in self.subscribers:
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                stale.append(queue)
+        for queue in stale:
+            self.subscribers.discard(queue)
 
     async def broadcast(self, event: dict[str, Any]) -> None:
         stale = []

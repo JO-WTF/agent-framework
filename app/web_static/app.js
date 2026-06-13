@@ -103,7 +103,8 @@ if (window.marked) {
     const lang = typeof tokenOrCode === "object" && tokenOrCode !== null ? tokenOrCode.lang : infostring;
     const language = String(lang || "").split(/\s+/)[0] || "text";
     const canHighlight = window.hljs && language !== "text" && hljs.getLanguage(language);
-    const highlighted = canHighlight
+    const skipHighlight = currentState && currentState.status === "running";
+    const highlighted = (canHighlight && !skipHighlight)
       ? hljs.highlight(String(text ?? ""), { language }).value
       : escapeHtml(text);
     return `
@@ -545,10 +546,40 @@ function renderMessages(messages, status, model_output) {
       node = document.createElement("div");
       els.messageList.appendChild(node);
     }
+
+    const existingWidgets = new Map();
+    node.querySelectorAll(".chat-widget").forEach(w => {
+      if (w.dataset.hydrated) {
+        existingWidgets.set(w.dataset.widget, w);
+      }
+    });
+    
+    const existingDetails = [];
+    node.querySelectorAll("details.chat-think-details").forEach(d => {
+      existingDetails.push(d.open);
+    });
     
     node.className = `message ${role}`;
     node.dataset.sig = sig;
     node.innerHTML = inner;
+
+    node.querySelectorAll("details.chat-think-details").forEach((d, index) => {
+      if (index < existingDetails.length) {
+        if (existingDetails[index]) {
+          d.setAttribute("open", "");
+        } else {
+          d.removeAttribute("open");
+        }
+      }
+    });
+
+    node.querySelectorAll(".chat-widget").forEach(w => {
+      const saved = existingWidgets.get(w.dataset.widget);
+      if (saved) {
+        w.parentNode.replaceChild(saved, w);
+      }
+    });
+
     hydrateWidgets(node);
   }
 
@@ -1819,28 +1850,33 @@ function renderRoutes(state) {
   renderMermaidRouteDiagram(mermaidDefinition, renderVersion);
 }
 
-function renderState(state) {
+function renderState(state, isStream = false) {
   currentState = { ...currentState, ...(state || {}) };
   state = currentState;
   const status = state.status || "idle";
-  setBadge(els.statusBadge, statusLabel(status), status);
-  const node = state.current_node || "-";
-  setBadge(els.nodeBadge, node === "-" ? "无节点" : node, node === "-" ? "neutral" : "running");
-  els.currentNodeValue.textContent = node;
-  els.complexityValue.textContent = state.task_complexity || "unknown";
-  els.stopBtn.disabled = status !== "running";
-  els.sendBtn.disabled = status === "running" || status === "awaiting_approval";
-  els.messageInput.disabled = status === "running" || status === "awaiting_approval";
-  if (els.saveModelConfigBtn) {
-    els.saveModelConfigBtn.disabled = status === "running" || status === "awaiting_approval";
+  
+  if (!isStream) {
+    setBadge(els.statusBadge, statusLabel(status), status);
+    const node = state.current_node || "-";
+    setBadge(els.nodeBadge, node === "-" ? "无节点" : node, node === "-" ? "neutral" : "running");
+    els.currentNodeValue.textContent = node;
+    els.complexityValue.textContent = state.task_complexity || "unknown";
+    els.stopBtn.disabled = status !== "running";
+    els.sendBtn.disabled = status === "running" || status === "awaiting_approval";
+    els.messageInput.disabled = status === "running" || status === "awaiting_approval";
+    if (els.saveModelConfigBtn) {
+      els.saveModelConfigBtn.disabled = status === "running" || status === "awaiting_approval";
+    }
   }
 
-
   renderMessages(state.messages || [], status, state.model_output);
-  renderEvents(state.events || []);
-  renderApprovals(state.world_state?.pending_approvals || []);
-  renderTodos(state.todo_list || []);
-  renderRoutes(state);
+  
+  if (!isStream) {
+    renderEvents(state.events || []);
+    renderApprovals(state.world_state?.pending_approvals || []);
+    renderTodos(state.todo_list || []);
+    renderRoutes(state);
+  }
 }
 
 function sessionHeaders() {
@@ -1887,13 +1923,23 @@ function connectWs() {
     setBadge(els.connectionBadge, "已连接", "success");
   });
 
+let streamBuffer = "";
+  let streamTimeout = null;
+
   ws.addEventListener("message", (message) => {
     try {
       const payload = JSON.parse(message.data);
       if (payload.state) {
         renderState(payload.state);
       } else if (payload.type === "stream") {
-        renderState({ model_output: (currentState.model_output || "") + (payload.content || "") });
+        streamBuffer += (payload.content || "");
+        if (!streamTimeout) {
+          streamTimeout = setTimeout(() => {
+            renderState({ model_output: (currentState.model_output || "") + streamBuffer }, true);
+            streamBuffer = "";
+            streamTimeout = null;
+          }, 200);
+        }
       }
     } catch (error) {
       console.error("Failed to render websocket update", error);
@@ -2041,7 +2087,7 @@ els.eventList.addEventListener("click", (event) => {
   } else {
     expandedEvents.add(eventId);
   }
-  loadState();
+  renderEvents(currentState.events || []);
 });
 
 initializeProgressSplitResizer();
