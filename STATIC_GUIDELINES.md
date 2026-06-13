@@ -1,13 +1,11 @@
 # 虚拟环境与包安装指南 [python, command]
-在沙箱运行环境中，由于容器根文件系统是只读的（`--read-only`），直接在全局运行 `pip install` 将会报错。你必须严格遵循以下规程：
-1. **不要在全局执行 pip install**：如果在全局执行 `pip install <package_name>`，会遇到 `Read-only file system` 错误或 PEP 668 外部管理环境报错。
-2. **在可写目录中创建虚拟环境**：当你需要安装第三方 Python 包时，必须首先在可读写的工作目录（`/workspace/work`）中创建并激活 Python 虚拟环境：
+沙箱运行环境会在首次执行命令或 Python 代码前自动创建并复用 `/workspace/work/venv`，该虚拟环境会继承标准镜像里的常用 Python 依赖。`run_command` 会默认激活该虚拟环境，`run_python` 会默认使用该虚拟环境的解释器。由于容器根文件系统是只读的（`--read-only`），你必须严格遵循以下规程：
+1. **不要向全局环境安装依赖**：不要使用 `sudo pip install`、`python -m pip install --user` 或修改 `/usr`、`/opt` 下的 Python 环境。
+2. **额外 Python 包默认安装到可写 venv**：当你需要安装第三方 Python 包时，直接使用默认激活的虚拟环境：
    ```bash
-   python -m venv /workspace/work/venv
-   source /workspace/work/venv/bin/activate
    pip install --cache-dir /tmp/pip-cache <package_name>
    ```
-3. **在运行 Python 代码时激活虚拟环境**：如果你需要运行自己编写的 Python 代码且需要用到新安装 of 依赖，必须先激活对应的虚拟环境，或者使用该虚拟环境下的 python 解释器（`/workspace/work/venv/bin/python`）来执行脚本，例如：
+3. **显式运行脚本时使用 venv 解释器**：如果你需要运行自己编写的 Python 脚本且需要用到新安装的依赖，优先使用该虚拟环境下的 python 解释器：
    ```bash
    /workspace/work/venv/bin/python my_script.py
    ```

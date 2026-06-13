@@ -157,7 +157,7 @@ Brain 和 Evaluator 都依赖这个结构。不要把 todo 变成自由文本。
     "mode": "docker",
     "status": "running",
     "container": "agent-sandbox-...",
-    "image": "jupyter/scipy-notebook:latest",
+    "image": "agent-framework-sandbox:latest",
     "work_dir": "/path/to/.data/sessions/.../sandbox_work/shared"
   },
   "pending_approvals": [

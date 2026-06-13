@@ -6,6 +6,7 @@
 
 - `app/tools/registry.py`
 - `app/tools/search.py`
+- `app/tools/webpage_reader.py`
 - `app/tools/python_runner.py`
 - `app/tools/command_runner.py`
 - `app/tools/context.py`
@@ -21,6 +22,7 @@
 | 工具 | 文件 | 用途 |
 | --- | --- | --- |
 | `search_web(query)` | `app/tools/search.py` | 通过 Tavily 获取联网检索结果，最多 3 条摘要。 |
+| `read_webpage(url, max_chars=2400, include_tables=False, headers=None)` | `app/tools/webpage_reader.py` | 读取 HTML 页面并提取正文，剔除 script/style/nav/footer/header/code/pre 等噪音和代码块，完整结果归档为引用。 |
 | `list_tool_results(limit=10)` | `app/tools/tool_results.py` | 查看当前会话已归档工具结果引用。 |
 | `read_tool_result(ref_id, offset=0, limit=8000)` | `app/tools/tool_results.py` | 按引用读取完整工具结果，支持分页。 |
 | `start_sandbox()` | `app/tools/sandbox_tools.py` | 显式启动当前会话共享 Docker 容器。 |
@@ -34,12 +36,12 @@
 | `list_skills()` | `app/tools/skills.py` | 列出当前技能库中的 SOP 名称、描述和标签。 |
 | `get_skill_sop(name)` | `app/tools/skills.py` | 读取指定技能 SOP 的完整 Markdown 内容。 |
 | `delete_skill_sop(name)` | `app/tools/skills.py` | 删除指定技能 SOP 文件。 |
-| `curl(url, method="GET", headers=None, data=None)` | `app/tools/curl.py` | 直接调用 HTTP/HTTPS 接口以发送 API 请求，支持 GET/POST/POST JSON 等。 |
+| `api_request(url, method="GET", headers=None, data=None)` | `app/tools/api_request.py` | 直接调用 HTTP/HTTPS API、JSON/纯文本/非 HTML 资源或调试原始响应。禁止用于网页 HTML 主体；HTML 响应会被拒绝并提示使用 `read_webpage()`。 |
 
 `AGENT_TOOLS` 是唯一注册表：
 
 ```python
-AGENT_TOOLS = [search_web, start_sandbox, sandbox_status, stop_sandbox, add_shared_mount, apply_sandbox_file, list_tool_results, read_tool_result, run_python, run_command, save_skill_sop, list_skills, delete_skill_sop, get_skill_sop, curl]
+AGENT_TOOLS = [search_web, read_webpage, start_sandbox, sandbox_status, stop_sandbox, add_shared_mount, apply_sandbox_file, list_tool_results, read_tool_result, run_python, run_command, save_skill_sop, list_skills, delete_skill_sop, get_skill_sop, api_request]
 ```
 
 新增工具时至少要改三处：
@@ -174,6 +176,15 @@ ModuleNotFoundError: No module named 'pandas'
 
 如果输出超过 1024 字符，工具返回引用和摘要，完整内容存档。这样避免长输出反复污染模型上下文。
 
+`read_webpage()` 的输出策略更严格：
+
+- 返回标题、描述、提取器、正文长度、主要标题和受 `max_chars` 限制的正文预览。
+- 完整提取结果以 JSON 存入 `tool_results.json`，包含 URL、状态码、content-type、metadata 和正文。
+- 如果模型需要继续阅读，必须通过 `read_tool_result(ref_id, offset, limit)` 分页读取，不要重新用 `api_request` 拉整页 HTML。
+- 主提取器是 `trafilatura`；未安装时自动使用内置 HTML parser fallback。
+
+`api_request()` 有硬性边界：当 GET 响应是 `text/html`、`application/xhtml+xml`，或内容看起来是 HTML 文档时，不返回也不归档 HTML 主体，只返回错误提示并要求改用 `read_webpage()`。这样避免网页源码进入 LLM 上下文。
+
 当工具返回类似：
 
 ```text
@@ -196,7 +207,7 @@ read_tool_result(ref_id="tool-0001")
 subprocess.run(command, shell=True, timeout=30)
 ```
 
-这不是系统级沙箱。当前 Agent 命令、Python 执行以及网络请求（curl）均必须进入 Docker 会话沙箱，不允许且不提供在宿主机上执行的任何降级通道或开关。第一阶段 Docker 会话沙箱路径：
+这不是系统级沙箱。当前 Agent 命令、Python 执行以及网络请求（api_request）均必须进入 Docker 会话沙箱，不允许且不提供在宿主机上执行的任何降级通道或开关。第一阶段 Docker 会话沙箱路径：
 
 ```text
 .data/sessions/{session_id}/sandbox_work/shared -> /workspace/work:rw

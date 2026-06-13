@@ -5,7 +5,21 @@ from app.runtime_paths import get_session_file_path
 from app.tools.context import ensure_session_id
 
 
+
+class StructuredToolResult:
+    """
+    A mechanism for tools to return BOTH a short instructional message to the agent
+    AND a large structured payload that is archived in the background.
+    
+    If `{{REF_ID}}` is present in `agent_message`, it will be replaced by the generated ref_id.
+    """
+    def __init__(self, agent_message: str, raw_output: str, metadata: dict | None = None):
+        self.agent_message = agent_message
+        self.raw_output = raw_output
+        self.metadata = metadata
+
 def store_tool_result_for_current_session(tool_name: str, raw_output: str, metadata: dict | None = None) -> str:
+
     return store_tool_result(
         tool_name,
         raw_output,
@@ -35,13 +49,19 @@ def read_tool_result_for_current_session(ref_id: str, offset: int = 0, limit: in
     if not cleaned_ref:
         raise ValueError("ref_id is required")
     safe_offset = max(0, int(offset))
-    safe_limit = max(1, min(int(limit), 20000))
+    if limit is None or int(limit) <= 0:
+        safe_limit = None
+    else:
+        safe_limit = int(limit)
 
     for record in _read_current_tool_records():
         if record.get("id") != cleaned_ref:
             continue
         content = str(record.get("content", ""))
-        chunk = content[safe_offset : safe_offset + safe_limit]
+        if safe_limit is None:
+            chunk = content[safe_offset:]
+        else:
+            chunk = content[safe_offset : safe_offset + safe_limit]
         next_offset = safe_offset + len(chunk)
         return {
             "id": record.get("id", ""),

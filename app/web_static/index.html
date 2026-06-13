@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agent Console</title>
-    <link rel="stylesheet" href="/static/styles.css?v=mapbox-map-v1" />
+    <link rel="stylesheet" href="/static/styles.css?v=28" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
@@ -55,7 +55,7 @@
         </div>
       </header>
 
-      <main class="workspace">
+      <main class="workspace runtime-collapsed">
         <section class="panel chat-panel">
           <div class="panel-header">
             <h2>对话 <span id="modelConfigBadge" class="badge success model-config-badge">服务端默认</span></h2>
@@ -68,15 +68,14 @@
         </section>
 
         <section class="panel runtime-panel">
-          <div class="panel-header">
-            <h2>实时运行</h2>
-            <span id="nodeBadge" class="badge neutral">无节点</span>
+          <div class="panel-header runtime-header">
+            <div class="runtime-header-title">
+              <h2>实时运行</h2>
+              <span id="nodeBadge" class="badge neutral">无节点</span>
+            </div>
+            <button id="toggleRuntimeBtn" class="button ghost" title="收起/展开">❯</button>
           </div>
 
-          <div class="runtime-section">
-            <div class="section-title">模型输出</div>
-            <div id="modelOutput" class="model-output">等待模型输出...</div>
-          </div>
 
           <div class="runtime-section timeline-wrap">
             <div class="section-title">节点事件</div>
@@ -126,6 +125,6 @@
     <script src="https://cdn.jsdelivr.net/npm/marked-katex-extension@5.1.2/lib/index.umd.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
     <script src="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"></script>
-    <script type="module" src="/static/app.js?v=mapbox-map-v1"></script>
+    <script type="module" src="/static/app.js?v=28"></script>
   </body>
 </html>
