@@ -1972,7 +1972,26 @@ let streamBuffer = "";
       if (payload.state) {
         renderState(payload.state);
       } else if (payload.type === "stream") {
-        streamBuffer += (payload.content || "");
+        let textToAppend = payload.content || "";
+        if (payload.token_type === "thinking") {
+            const currentText = (currentState.model_output || "") + streamBuffer;
+            const lastThink = currentText.lastIndexOf("<think>");
+            const lastThinkClose = currentText.lastIndexOf("</think>");
+            const isThinkOpen = (lastThink !== -1) && (lastThinkClose === -1 || lastThink > lastThinkClose);
+            if (!isThinkOpen) {
+                textToAppend = "<think>" + textToAppend;
+            }
+        } else if (payload.token_type === "content") {
+            const currentText = (currentState.model_output || "") + streamBuffer;
+            const lastThink = currentText.lastIndexOf("<think>");
+            const lastThinkClose = currentText.lastIndexOf("</think>");
+            const isThinkOpen = (lastThink !== -1) && (lastThinkClose === -1 || lastThink > lastThinkClose);
+            if (isThinkOpen) {
+                textToAppend = "</think>" + textToAppend;
+            }
+        }
+        
+        streamBuffer += textToAppend;
         if (!streamTimeout) {
           streamTimeout = setTimeout(() => {
             renderState({ model_output: (currentState.model_output || "") + streamBuffer }, true);

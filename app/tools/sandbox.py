@@ -74,15 +74,9 @@ def get_sandbox_world_state(session_id: str | None) -> dict[str, Any] | None:
 
     container = str(metadata.get("container", ""))
     runtime_status = str(metadata.get("status", "unknown"))
-    if container and runtime_status != "stopped":
-        try:
-            running = inspect_container_running(container)
-            if running:
-                runtime_status = "running"
-            else:
-                runtime_status = "stopped"
-        except SandboxError as e:
-            runtime_status = f"unavailable: {str(e)}"
+    
+    # Removed synchronous docker inspect here as it blocks the event loop on every node traversal.
+    # We now trust the status recorded in metadata.
 
     return {
         "mode": "docker",
