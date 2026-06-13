@@ -32,4 +32,6 @@ async def read_tool_result(ref_id: str, offset: int = 0, limit: int = 8000, conf
     )
     if result["has_more"]:
         header += f" next_offset={result['next_offset']}"
+    if result["offset"] >= result["content_length"]:
+        return f"{header}\n\n已到达工具结果末尾，没有更多内容。"
     return f"{header}\n\n{result['content']}"

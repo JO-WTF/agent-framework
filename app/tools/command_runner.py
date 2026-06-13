@@ -42,6 +42,15 @@ async def run_command(command: str, config: RunnableConfig = None) -> str:
             text,
             {"command": command, "returncode": result_obj.returncode, **result_obj.metadata},
         )
+        if result_obj.returncode != 0:
+            if len(text) > 1024:
+                summary = summarize_text(text, max_chars=512)
+                return (
+                    f"执行失败: 命令退出码 {result_obj.returncode}，输出已保存为引用 {ref_id}。\n"
+                    f"如需完整内容，请调用 read_tool_result(ref_id=\"{ref_id}\")，必要时使用 offset/limit 分页。\n"
+                    f"摘要:\n{summary}"
+                )
+            return f"执行失败: 命令退出码 {result_obj.returncode}。\n{text}"
         if len(text) > 1024:
             summary = summarize_text(text, max_chars=512)
             return f"命令输出过长，已保存为引用 {ref_id}。\n如需完整内容，请调用 read_tool_result(ref_id=\"{ref_id}\")，必要时使用 offset/limit 分页。\n摘要:\n{summary}"

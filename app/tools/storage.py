@@ -60,7 +60,47 @@ def read_tool_result_for_current_session(ref_id: str, offset: int = 0, limit: in
 
 
 def _read_current_tool_records() -> list[dict[str, Any]]:
-    path = get_session_file_path(ensure_session_id(), "tool_results.json")
+    session_id = ensure_session_id()
+    records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for record in _read_jsonl_records(get_session_file_path(session_id, "tool_results.jsonl")):
+        record_id = str(record.get("id", ""))
+        if record_id in seen_ids:
+            continue
+        seen_ids.add(record_id)
+        records.append(record)
+
+    for record in _read_legacy_json_records(get_session_file_path(session_id, "tool_results.json")):
+        record_id = str(record.get("id", ""))
+        if record_id in seen_ids:
+            continue
+        seen_ids.add(record_id)
+        records.append(record)
+
+    return records
+
+
+def _read_jsonl_records(path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    try:
+        import json
+
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if isinstance(record, dict):
+                records.append(record)
+    except Exception:
+        return []
+    return records
+
+
+def _read_legacy_json_records(path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
@@ -69,4 +109,4 @@ def _read_current_tool_records() -> list[dict[str, Any]]:
         records = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return []
-    return records if isinstance(records, list) else []
+    return [record for record in records if isinstance(record, dict)] if isinstance(records, list) else []

@@ -113,8 +113,6 @@ def get_max_retries(tool_name: str) -> int:
     """Return a conservative retry budget per tool."""
     if tool_name == "run_python":
         return 3
-    if tool_name == "search_web":
-        return 1
     if tool_name == "run_command":
         return 1
     return 0

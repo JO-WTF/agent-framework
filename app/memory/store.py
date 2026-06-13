@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from app.runtime_paths import GLOBAL_DATA_DIR, ROOT_DIR, ensure_runtime_dirs, ge
 STATIC_GUIDELINES_FILE = ROOT_DIR / "STATIC_GUIDELINES.md"
 SKILLS_DIR = ROOT_DIR / "skills"
 GLOBAL_AGENT_MEMORY_FILE = GLOBAL_DATA_DIR / "agent_memory.json"
+_TOOL_RESULT_WRITE_LOCK = threading.Lock()
 
 DEFAULT_MESSAGE_WINDOW = 8
 MAX_AGENT_NOTES = 100
@@ -312,20 +314,56 @@ def store_tool_result(tool_name: str, raw_output: str, session_id: str | None = 
     if not session_id:
         raise ValueError("session_id is required for tool result storage")
 
-    tool_results_file = get_session_file_path(session_id, "tool_results.json")
-    records = _read_json(tool_results_file, [])
-    ref_id = f"tool-{len(records) + 1:04d}"
-    payload = {
-        "id": ref_id,
-        "created_at": datetime.now().isoformat(),
-        "tool_name": tool_name,
-        "summary": summarize_text(raw_output, max_chars=256),
-        "metadata": metadata or {},
-        "content": raw_output,
-    }
-    records.insert(0, payload)
-    _write_json(tool_results_file, records[:MAX_TOOL_RESULTS])
-    return ref_id
+    tool_results_file = get_session_file_path(session_id, "tool_results.jsonl")
+    counter_file = get_session_file_path(session_id, "tool_results_counter.txt")
+    with _TOOL_RESULT_WRITE_LOCK:
+        next_id = _next_tool_result_number(session_id, counter_file)
+        ref_id = f"tool-{next_id:04d}"
+        payload = {
+            "id": ref_id,
+            "created_at": datetime.now().isoformat(),
+            "tool_name": tool_name,
+            "summary": summarize_text(raw_output, max_chars=256),
+            "metadata": metadata or {},
+            "content": raw_output,
+        }
+        with tool_results_file.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(make_json_safe_for_storage(payload), ensure_ascii=False) + "\n")
+        counter_file.write_text(str(next_id), encoding="utf-8")
+        return ref_id
+
+
+def _next_tool_result_number(session_id: str, counter_file: Path) -> int:
+    try:
+        current = int(counter_file.read_text(encoding="utf-8").strip())
+        return current + 1
+    except Exception:
+        return _max_existing_tool_result_number(session_id) + 1
+
+
+def _max_existing_tool_result_number(session_id: str) -> int:
+    max_id = 0
+    paths = [
+        get_session_file_path(session_id, "tool_results.jsonl"),
+        get_session_file_path(session_id, "tool_results.json"),
+    ]
+    for path in paths:
+        if not path.exists():
+            continue
+        try:
+            if path.suffix == ".jsonl":
+                records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            else:
+                records = _read_json(path, [])
+        except Exception:
+            records = []
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            match = re.match(r"^tool-(\d+)$", str(record.get("id", ""))) if isinstance(record, dict) else None
+            if match:
+                max_id = max(max_id, int(match.group(1)))
+    return max_id
 
 
 def summarize_text(text: str, max_chars: int = MAX_SUMMARY_CHARS) -> str:
@@ -527,4 +565,3 @@ def trim_messages(messages: list[Any], keep_recent: int = DEFAULT_MESSAGE_WINDOW
         return _enforce_context_size([_build_summary_message(omitted)] + preserved + recent_messages, max_context_bytes, session_id)
 
     return _enforce_context_size(preserved + recent_messages, max_context_bytes, session_id)
-

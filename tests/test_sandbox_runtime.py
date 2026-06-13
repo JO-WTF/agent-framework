@@ -6,13 +6,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.tools.sandbox import DockerSandboxRuntime, ResourceLimits, add_shared_mount, SandboxError
+from app.tools.sandbox import DockerSandboxRuntime, ResourceLimits, add_shared_mount, SandboxError, get_session_sandbox_status
 from app.tools.context import set_session_id
+import app.tools.sandbox as sandbox_module
 
 
 class DockerSandboxRuntimeTests(unittest.TestCase):
     def setUp(self):
         set_session_id("unit-sandbox")
+        sandbox_module._RUNNING_CONTAINER_CACHE.clear()
+        sandbox_module._SANDBOX_WORLD_STATE_CACHE.clear()
 
     def test_docker_runtime_lazily_starts_session_container_then_execs(self):
         missing = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="missing")
@@ -74,6 +77,51 @@ class DockerSandboxRuntimeTests(unittest.TestCase):
         self.assertFalse(any(call[:4] == ["docker", "run", "-d", "--rm"] for call in calls))
         self.assertEqual(calls[1][-3:], ["python", "-c", "print('ok')"])
         self.assertEqual(result.stdout, "ok")
+
+    def test_docker_runtime_skips_repeated_inspect_with_running_cache(self):
+        running = subprocess.CompletedProcess(args=[], returncode=0, stdout="true\n", stderr="")
+        executed_one = subprocess.CompletedProcess(args=[], returncode=0, stdout="one\n", stderr="")
+        executed_two = subprocess.CompletedProcess(args=[], returncode=0, stdout="two\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp, patch("app.runtime_paths.SESSIONS_DATA_DIR", Path(tmp) / ".data" / "sessions"), patch(
+            "app.tools.sandbox.subprocess.run", side_effect=[running, executed_one, executed_two]
+        ) as run_mock:
+            set_session_id("unit-cache")
+            session_dir = Path(tmp) / ".data" / "sessions" / "unit-cache"
+            session_dir.mkdir(parents=True)
+            (session_dir / "sandbox.json").write_text(
+                json.dumps(
+                    {
+                        "runtime": "docker",
+                        "status": "running",
+                        "container": DockerSandboxRuntime._container_name("unit-cache"),
+                        "image": "python:3.12-slim",
+                        "work_dir": str(session_dir / "sandbox_work" / "shared"),
+                        "shared_mounts": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            runtime = DockerSandboxRuntime(image="python:3.12-slim")
+            first = runtime.run_command("printf one")
+            second = runtime.run_command("printf two")
+
+        calls = [call.args[0] for call in run_mock.call_args_list]
+        inspect_calls = [call for call in calls if call[:4] == ["docker", "inspect", "-f", "{{.State.Running}}"]]
+        self.assertEqual(len(inspect_calls), 1)
+        self.assertEqual(first.stdout, "one")
+        self.assertEqual(second.stdout, "two")
+
+    def test_sandbox_status_does_not_start_container_when_metadata_is_absent(self):
+        with tempfile.TemporaryDirectory() as tmp, patch("app.runtime_paths.SESSIONS_DATA_DIR", Path(tmp) / ".data" / "sessions"), patch(
+            "app.tools.sandbox.subprocess.run"
+        ) as run_mock:
+            set_session_id("unit-status-only")
+
+            status = get_session_sandbox_status()
+
+        run_mock.assert_not_called()
+        self.assertEqual(status["status"], "not_started")
 
     def test_docker_runtime_mounts_authorized_shared_dirs_readonly(self):
         missing = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="missing")

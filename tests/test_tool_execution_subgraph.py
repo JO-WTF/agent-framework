@@ -1,4 +1,5 @@
 import os
+import time
 import unittest
 from unittest.mock import patch
 
@@ -11,6 +12,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from app.nodes.tool_execution_subgraph import classify_tool_result, tool_execution_subgraph, validate_fixed_args
 from app.nodes.tools_node import tools_execution_node
 from app.tools.context import get_session_id
+from app.tools.command_runner import run_command
 from app.tools.sandbox import SandboxResult
 
 
@@ -42,6 +44,18 @@ class ToolExecutionSubgraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "success")
         self.assertIn("hello", result["final_result"])
         self.assertIn("internal_messages", result)
+
+    @patch("app.tools.command_runner.store_tool_result_for_current_session", return_value="tool-0001")
+    @patch("app.tools.command_runner.get_session_id_from_config_or_context")
+    @patch(
+        "app.tools.command_runner.run_sandboxed_command",
+        return_value=SandboxResult(stdout="", stderr="cat: missing: No such file", returncode=1, metadata={"runtime": "docker"}),
+    )
+    async def test_run_command_marks_nonzero_exit_as_failure(self, _run_mock, _session_mock, _store_mock):
+        result = await run_command.ainvoke({"command": "cat missing"}, config={})
+
+        self.assertIn("执行失败: 命令退出码 1", result)
+        self.assertIn("标准错误:", result)
 
     async def test_tools_node_returns_only_tool_messages_for_parent_graph(self):
         message = AIMessage(
@@ -81,6 +95,36 @@ class ToolExecutionSubgraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("internal_messages", result)
         self.assertIn("one", result["messages"][0].content)
         self.assertIn("two", result["messages"][1].content)
+
+    async def test_tools_node_runs_safe_readonly_tools_concurrently_preserving_order(self):
+        message = AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call-1", "name": "search_web", "args": {"query": "one"}},
+                {"id": "call-2", "name": "read_tool_result", "args": {"ref_id": "tool-0001"}},
+            ],
+        )
+
+        async def fake_ainvoke(payload, config=None):
+            await __import__("asyncio").sleep(0.05)
+            return {"final_result": f"result {payload['tool_call_id']}"}
+
+        started = time.perf_counter()
+        with patch("app.nodes.tools_node.tool_execution_subgraph.ainvoke", side_effect=fake_ainvoke):
+            result = await tools_execution_node(
+                {
+                    "messages": [message],
+                    "revision_count": 0,
+                    "eval_status": "",
+                    "session_id": "unit-test",
+                },
+                {},
+            )
+        elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 0.09)
+        self.assertEqual([item.tool_call_id for item in result["messages"]], ["call-1", "call-2"])
+        self.assertEqual([item.content for item in result["messages"]], ["result call-1", "result call-2"])
 
     async def test_unknown_tool_returns_failure_tool_message(self):
         message = AIMessage(
@@ -168,6 +212,7 @@ class ToolExecutionSubgraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, "needs_external_action")
         self.assertIn("pandas", reason)
         self.assertEqual(classify_tool_result("search_web", "未找到相关结果。"), ("retryable_failure", "搜索无结果，可尝试改写查询。"))
+        self.assertEqual(classify_tool_result("run_command", "执行失败: 命令退出码 2。"), ("retryable_failure", "命令执行失败，可尝试一次安全参数修复。"))
         self.assertEqual(classify_tool_result("run_command", "命令执行成功 (无输出)。"), ("success", ""))
 
     def test_rejects_dangerous_command_repairs(self):
@@ -227,6 +272,43 @@ class ToolExecutionSubgraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool.calls, [{"code": "print(x)"}, {"code": "print(1)"}])
         self.assertEqual(result["final_result"], "修复成功")
         self.assertIn("internal_messages", result)
+
+    async def test_search_failure_returns_without_fix_llm_retry(self):
+        class EmptySearchTool:
+            name = "search_web"
+
+            async def ainvoke(self, args, config=None):
+                return "未找到相关结果。"
+
+        class FailingLLM:
+            async def ainvoke(self, messages, config=None):
+                raise AssertionError("search failures should return to the agent without fix_args LLM")
+
+        with patch("app.nodes.tool_execution_subgraph.TOOLS_BY_NAME", {"search_web": EmptySearchTool()}), patch(
+            "app.nodes.tool_execution_subgraph.llm_client", FailingLLM()
+        ):
+            result = await tool_execution_subgraph.ainvoke(
+                {
+                    "original_request": {
+                        "id": "call-1",
+                        "name": "search_web",
+                        "args": {"query": "unlikely"},
+                    },
+                    "tool_call_id": "call-1",
+                    "tool_name": "search_web",
+                    "args": {"query": "unlikely"},
+                    "session_id": "unit-test",
+                    "retry_count": 0,
+                    "max_retries": 0,
+                    "internal_messages": [],
+                    "status": "pending",
+                    "final_result": "",
+                }
+            )
+
+        self.assertEqual(result["status"], "retryable_failure")
+        self.assertEqual(result["retry_count"], 0)
+        self.assertIn("未找到相关结果", result["final_result"])
 
     async def test_missing_python_dependency_exits_to_parent_without_fixing(self):
         class MissingDependencyPythonTool:

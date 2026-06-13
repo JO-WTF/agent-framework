@@ -1,5 +1,4 @@
 import json
-import httpx
 from langchain_core.tools import tool
 from langchain_core.runnables.config import RunnableConfig
 
@@ -78,7 +77,10 @@ async def curl(
         if result_obj.returncode != 0:
             raise RuntimeError(result_obj.stderr or "沙箱 Python 解释器执行异常")
 
-        response_data = json.loads(result_obj.stdout.strip())
+        stdout = result_obj.stdout.strip()
+        if not stdout:
+            raise RuntimeError(result_obj.stderr or "沙箱 HTTP 请求未返回结果")
+        response_data = json.loads(stdout)
         if not response_data.get("success"):
             raise RuntimeError(response_data.get("error", "未知请求错误"))
 

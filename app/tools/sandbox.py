@@ -16,6 +16,8 @@ SHARED_MOUNTS_FILE = "shared_mounts.json"
 SANDBOX_STATUS_CACHE_TTL_SECONDS = float(os.getenv("AGENT_SANDBOX_STATUS_CACHE_TTL", "2"))
 DOCKER_INSPECT_TIMEOUT_SECONDS = float(os.getenv("AGENT_DOCKER_INSPECT_TIMEOUT", "2"))
 _SANDBOX_WORLD_STATE_CACHE: dict[str, tuple[float, tuple[int, int], dict[str, Any]]] = {}
+_RUNNING_CONTAINER_CACHE_TTL_SECONDS = float(os.getenv("AGENT_SANDBOX_RUNNING_CACHE_TTL", "2"))
+_RUNNING_CONTAINER_CACHE: dict[str, float] = {}
 
 
 @dataclass(frozen=True)
@@ -186,6 +188,9 @@ class DockerSandboxRuntime:
         )
 
     def ensure_container(self) -> None:
+        if self._running_cache_valid():
+            return
+
         try:
             status = inspect_container_running(self.container_name)
         except SandboxError:
@@ -230,12 +235,34 @@ class DockerSandboxRuntime:
         self._start_container()
         self._write_metadata("running")
 
+    def _running_cache_key(self) -> str:
+        mounts = json.dumps(self.shared_mounts, ensure_ascii=False, sort_keys=True)
+        return f"{self.session_id}|{self.image}|{mounts}"
+
+    def _running_cache_valid(self) -> bool:
+        if _RUNNING_CONTAINER_CACHE_TTL_SECONDS <= 0:
+            return False
+        expires_at = _RUNNING_CONTAINER_CACHE.get(self._running_cache_key())
+        return bool(expires_at and expires_at > time.monotonic())
+
+    def _mark_running_cache(self) -> None:
+        if _RUNNING_CONTAINER_CACHE_TTL_SECONDS <= 0:
+            return
+        _RUNNING_CONTAINER_CACHE[self._running_cache_key()] = time.monotonic() + _RUNNING_CONTAINER_CACHE_TTL_SECONDS
+
+    def _clear_running_cache(self) -> None:
+        prefix = f"{self.session_id}|"
+        for key in list(_RUNNING_CONTAINER_CACHE):
+            if key.startswith(prefix):
+                _RUNNING_CONTAINER_CACHE.pop(key, None)
+
     def status(self) -> dict[str, Any]:
         metadata = get_sandbox_world_state(self.session_id)
         return metadata or {"mode": "docker", "status": "disabled"}
 
     def stop(self) -> dict[str, str]:
         subprocess.run(["docker", "stop", self.container_name], capture_output=True, text=True, timeout=15)
+        self._clear_running_cache()
         self._write_metadata("stopped")
         return self.status()
 
@@ -303,6 +330,10 @@ class DockerSandboxRuntime:
             "shared_mounts": self.shared_mounts,
         }
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        if status == "running":
+            self._mark_running_cache()
+        else:
+            self._clear_running_cache()
 
     @staticmethod
     def _container_name(session_id: str) -> str:
@@ -432,7 +463,6 @@ def stop_session_sandbox() -> dict[str, Any]:
 
 def get_session_sandbox_status() -> dict[str, Any]:
     runtime = DockerSandboxRuntime()
-    runtime.ensure_container()
     return runtime.status()
 
 

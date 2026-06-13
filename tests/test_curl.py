@@ -94,6 +94,23 @@ class CurlToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("请求失败: Connection refused", result)
         self.assertIn("已记录笔记 note-123", result)
 
+    @patch("app.tools.curl.save_agent_note")
+    @patch("app.tools.curl.store_tool_result_for_current_session")
+    @patch("app.tools.curl.get_session_id_from_config_or_context")
+    @patch("app.tools.curl.run_sandboxed_python")
+    async def test_curl_tool_reports_empty_sandbox_output(self, mock_run_python, mock_session, mock_store, mock_note):
+        config = RunnableConfig(configurable={"session_id": "test-session"})
+        mock_run_python.return_value = SandboxResult(stdout="", stderr="", returncode=0)
+        mock_note.return_value = "note-124"
+
+        result = await curl.ainvoke({
+            "url": "https://api.example.com/data",
+            "method": "GET",
+        }, config=config)
+
+        self.assertIn("请求失败: 沙箱 HTTP 请求未返回结果", result)
+        self.assertIn("已记录笔记 note-124", result)
+
 
 if __name__ == "__main__":
     unittest.main()
