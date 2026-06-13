@@ -82,7 +82,7 @@ async def get_administrative_boundary(country_code: str, region_name: str, level
                     }
                     geojson_str = json.dumps(result_geojson, ensure_ascii=False)
                     ref_id = store_tool_result_for_current_session("get_administrative_boundary", geojson_str, {"type": "geojson"})
-                    return f"成功提取 {shape_name} 的边界数据。数据格式为 GeoJSON (大小: {len(geojson_str)} 字节)。数据已存入后台引用，你可以直接将此引用ID ({ref_id}) 传给 map_card 的 geojson 参数！"
+                    return f"成功提取 {shape_name} 的边界数据。数据格式为 GeoJSON (大小: {len(geojson_str)} 字节)。数据已存入后台引用，你可以使用宏语法 {{{{ref:{ref_id}}}}} 作为 geojson 参数的值传递给 map_card 的 geojson 参数！"
             
             return f"未找到名为 '{region_name}' 的行政区。请先调用 get_administrative_regions 确认确切名称。"
     except Exception as e:
@@ -144,7 +144,7 @@ async def get_route_directions(start_lat: float, start_lon: float, end_lat: floa
             }
             geojson_str = json.dumps(geojson, ensure_ascii=False)
             ref_id = store_tool_result_for_current_session("get_route_directions", geojson_str, {"type": "geojson"})
-            return f"【导航成功】方式: {profile}\n导航距离: {distance_km:.2f} 公里\n预计耗时: {duration_min:.1f} 分钟。\n路线的 GeoJSON 轨迹数据已生成并存储，请直接将此引用ID ({ref_id}) 传递给 map_card 的 geojson 参数以显示轨迹地图！"
+            return f"【导航成功】方式: {profile}\n导航距离: {distance_km:.2f} 公里\n预计耗时: {duration_min:.1f} 分钟。\n路线的 GeoJSON 轨迹数据已生成并存储，请使用宏语法 {{{{ref:{ref_id}}}}} 作为 geojson 参数的值传递给 map_card 的 geojson 参数以显示轨迹地图！"
     except Exception as e:
         logger.error(f"get_route_directions error: {e}")
         return f"执行失败: {e}"
