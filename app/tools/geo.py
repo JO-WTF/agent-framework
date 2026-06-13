@@ -45,9 +45,15 @@ async def get_administrative_regions(country_code: str, level: str = "1") -> str
             
             geojson_str = json.dumps(geojson, ensure_ascii=False)
             ref_id = store_tool_result_for_current_session("get_administrative_regions", geojson_str, {"type": "geojson"})
+
+            display_names = region_names[:20]
+            names_str = ", ".join(display_names)
+            if len(region_names) > 20:
+                names_str += f" 等 (省略显示剩余 {len(region_names) - 20} 个)"
             
-            result_text = f"【{country_code} ADM{level} 行政区列表】共 {len(region_names)} 个:\n" + ", ".join(region_names)
-            result_text += f"\n\n💡 提示：上述所有行政区的完整边界集合数据 (GeoJSON, 大小: {len(geojson_str)} 字节) 已存入后台引用。你可以直接使用宏语法 {{{{ref:{ref_id}}}}} 作为 geojson 参数的值传给 map_card 等工具，从而一次性展示全部行政区！"
+            result_text = f"💡 强烈提示：【{country_code} ADM{level}】共 {len(region_names)} 个行政区的完整 GeoJSON 边界数据 (大小: {len(geojson_str)} 字节) 已存入后台引用！\n"
+            result_text += f"👉 请立即在工具参数中填写 {{{{ref:{ref_id}}}}} 作为 geojson 的值传给 render_map_card，即可一次性渲染该国全部省市边界地图！不要自己拼装！\n\n"
+            result_text += f"附部分行政区列表: {names_str}"
             return result_text
     except Exception as e:
         logger.error(f"get_administrative_regions error: {e}")
