@@ -188,7 +188,7 @@ async def render_map_card(
             "use_stored_card": True
         }
     }
-    widget_code = f"```widget\n{json.dumps(widget_payload, ensure_ascii=False, indent=2)}\n```"
+    widget_code = f"```json\n{json.dumps(widget_payload, ensure_ascii=False, indent=2)}\n```"
 
     # Store full card payload in session state for backend hydration
     await _publish_map_card_to_web_session(session_id, card)
