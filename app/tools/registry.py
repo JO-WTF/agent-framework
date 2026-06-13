@@ -4,6 +4,7 @@ from app.tools.api_request import api_request
 from app.tools.command_runner import run_command
 from app.tools.context import get_session_id, set_session_id
 from app.tools.geocoding import geocode_address, reverse_geocode
+from app.tools.geo import get_administrative_regions, get_administrative_boundary, calculate_geodesic_distance, get_route_directions, find_nearby_pois, get_elevation
 from app.tools.map_card import render_map_card
 from app.tools.python_runner import run_python
 from app.tools.sandbox_tools import add_shared_mount_tool, apply_sandbox_file, sandbox_status, start_sandbox, stop_sandbox
@@ -19,7 +20,7 @@ TOOL_CATEGORIES = {
     "results": [list_tool_results, read_tool_result, store_data],
     "execution": [run_python, run_command],
     "skills": [save_skill_sop, list_skills, delete_skill_sop, get_skill_sop],
-    "geo": [geocode_address, reverse_geocode],
+    "geo": [geocode_address, reverse_geocode, get_administrative_regions, get_administrative_boundary, calculate_geodesic_distance, get_route_directions, find_nearby_pois, get_elevation],
     "visualization": [render_map_card],
 }
 
