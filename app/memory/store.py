@@ -499,10 +499,40 @@ def _build_summary_message(messages: list[Any]) -> HumanMessage:
     return HumanMessage(content="\n".join(lines))
 
 
+def _sanitize_tool_messages(messages: list[Any]) -> list[Any]:
+    sanitized = []
+    pending_tool_calls: list[dict[str, Any]] = []
+    
+    for msg in messages:
+        if isinstance(msg, (HumanMessage, AIMessage)) and pending_tool_calls:
+            for tc in pending_tool_calls:
+                sanitized.append(ToolMessage(
+                    content="Tool execution was interrupted or cancelled. Continuing...",
+                    tool_call_id=tc["id"],
+                ))
+            pending_tool_calls = []
+            
+        sanitized.append(msg)
+        
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            pending_tool_calls.extend(msg.tool_calls)
+            
+        if isinstance(msg, ToolMessage):
+            pending_tool_calls = [tc for tc in pending_tool_calls if tc["id"] != getattr(msg, "tool_call_id", "")]
+            
+    if pending_tool_calls:
+        for tc in pending_tool_calls:
+            sanitized.append(ToolMessage(
+                content="Tool execution was interrupted or cancelled. Continuing...",
+                tool_call_id=tc["id"],
+            ))
+            
+    return sanitized
+
 def trim_messages(messages: list[Any], keep_recent: int = DEFAULT_MESSAGE_WINDOW, session_id: str | None = None) -> list[Any]:
     max_context_bytes = get_max_context_size_bytes()
     if len(messages) <= keep_recent:
-        return _enforce_context_size(list(messages), max_context_bytes, session_id)
+        return _sanitize_tool_messages(_enforce_context_size(list(messages), max_context_bytes, session_id))
 
     early_messages = messages[:-keep_recent]
     recent_messages = list(messages[-keep_recent:])
@@ -534,7 +564,7 @@ def trim_messages(messages: list[Any], keep_recent: int = DEFAULT_MESSAGE_WINDOW
     if omitted:
         _archive_removed_messages(omitted, session_id)
         # Place the summary message at the start of the list to prevent breaking tool_calls -> tool adjacency
-        return _enforce_context_size([_build_summary_message(omitted)] + preserved + recent_messages, max_context_bytes, session_id)
+        return _sanitize_tool_messages(_enforce_context_size([_build_summary_message(omitted)] + preserved + recent_messages, max_context_bytes, session_id))
 
-    return _enforce_context_size(preserved + recent_messages, max_context_bytes, session_id)
+    return _sanitize_tool_messages(_enforce_context_size(preserved + recent_messages, max_context_bytes, session_id))
 

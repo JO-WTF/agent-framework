@@ -18,7 +18,6 @@ const els = {
   messageInput: document.getElementById("messageInput"),
   sendBtn: document.getElementById("sendBtn"),
   messageList: document.getElementById("messageList"),
-  modelOutput: document.getElementById("modelOutput"),
   eventList: document.getElementById("eventList"),
   todoList: document.getElementById("todoList"),
   approvalList: document.getElementById("approvalList"),
@@ -27,6 +26,8 @@ const els = {
   progressResizeHandle: document.getElementById("progressResizeHandle"),
   complexityValue: document.getElementById("complexityValue"),
   currentNodeValue: document.getElementById("currentNodeValue"),
+  workspace: document.querySelector(".workspace"),
+  toggleRuntimeBtn: document.getElementById("toggleRuntimeBtn"),
 };
 
 const SESSION_STORAGE_KEY = "agent_session_id";
@@ -386,27 +387,62 @@ function renderAssistantMarkdown(content) {
   if (!window.marked || !window.DOMPurify) {
     return escapeHtml(content);
   }
-  const { think, message } = parseThinkingContent(content);
+  
   let html = "";
-  if (think) {
-    html += `
-      <details class="chat-think-details" open>
-        <summary class="chat-think-summary">🧠 思考过程 (点击收起/展开)</summary>
-        <div class="chat-think-content">${escapeHtml(think)}</div>
-      </details>
-    `;
+  const blockRe = /<think>([\s\S]*?)<\/think>/gi;
+  let cursor = 0;
+  let match;
+
+  while ((match = blockRe.exec(content)) !== null) {
+    const textBefore = content.substring(cursor, match.index).trim();
+    if (textBefore) {
+      html += DOMPurify.sanitize(marked.parse(textBefore), {
+        USE_PROFILES: { html: true, mathMl: true },
+        ADD_ATTR: ["class", "style", "xmlns"]
+      });
+    }
+    
+    const thinkContent = match[1].trim();
+    if (thinkContent) {
+      html += `
+        <details class="chat-think-details" open>
+          <summary class="chat-think-summary">🧠 思考过程 (点击收起/展开)</summary>
+          <div class="chat-think-content">${escapeHtml(thinkContent)}</div>
+        </details>
+      `;
+    }
+    cursor = blockRe.lastIndex;
   }
-  if (message) {
-    html += DOMPurify.sanitize(marked.parse(message), {
+
+  const remainder = content.substring(cursor);
+  const openMatch = /<think>([\s\S]*)$/i.exec(remainder);
+  
+  if (openMatch) {
+    const textBefore = remainder.substring(0, openMatch.index).trim();
+    if (textBefore) {
+      html += DOMPurify.sanitize(marked.parse(textBefore), {
+        USE_PROFILES: { html: true, mathMl: true },
+        ADD_ATTR: ["class", "style", "xmlns"]
+      });
+    }
+    const thinkContent = openMatch[1].trim();
+    if (thinkContent) {
+      html += `
+        <details class="chat-think-details" open>
+          <summary class="chat-think-summary">🧠 思考过程 (点击收起/展开)</summary>
+          <div class="chat-think-content">${escapeHtml(thinkContent)}</div>
+        </details>
+      `;
+    }
+  } else if (remainder.trim()) {
+    html += DOMPurify.sanitize(marked.parse(remainder.trim()), {
       USE_PROFILES: { html: true, mathMl: true },
       ADD_ATTR: ["class", "style", "xmlns"]
     });
-  } else if (!think) {
-    html += escapeHtml(content);
   }
-  return html;
-}
 
+  return html || escapeHtml(content);
+}
 
 function messageBlocks(message) {
   if (Array.isArray(message.blocks) && message.blocks.length) {
@@ -429,34 +465,104 @@ function renderAssistantBlocks(blocks) {
     .join("");
 }
 
+
+function parseMessageBlocksJS(content) {
+  if (!content) return null;
+  const blocks = [];
+  const regex = /^[ \t]*(`{3,}|~{3,})[ \t]*widget[ \t]*\r?\n([\s\S]*?)\n[ \t]*\1[ \t]*$/gm;
+  let lastIndex = 0;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    const textBefore = content.substring(lastIndex, match.index);
+    if (textBefore.trim()) blocks.push({ type: "text", content: textBefore.trim() });
+    try {
+      const payload = JSON.parse(match[2].trim());
+      if (payload && payload.widget_type) {
+        blocks.push({ type: "widget", widget_type: payload.widget_type, id: payload.id || "", props: payload.props || {} });
+      } else {
+        blocks.push({ type: "text", content: match[0] });
+      }
+    } catch (e) {
+      blocks.push({ type: "text", content: match[0] });
+    }
+    lastIndex = regex.lastIndex;
+  }
+  const textAfter = content.substring(lastIndex);
+  if (textAfter.trim()) blocks.push({ type: "text", content: textAfter.trim() });
+  return blocks.some(b => b.type === "widget") ? blocks : null;
+}
+
 let lastMessagesSignature = null;
 
-function renderMessages(messages) {
-  const signature = JSON.stringify(
-    messages.map((m) => ({ role: m.role, blocks: m.blocks || null, content: m.content || "" }))
-  );
-  if (signature === lastMessagesSignature) {
-    return;
+function renderMessages(messages, status, model_output) {
+  const displayMessages = [...messages];
+  if (status === "running" && model_output) {
+    const combinedRound = model_output.replace(/\n*\[\[MODEL_OUTPUT_ROUND_BREAK\]\]\n*/g, "\n\n").trim();
+    if (combinedRound) {
+      const parsedBlocks = parseMessageBlocksJS(combinedRound);
+      if (parsedBlocks) {
+        displayMessages.push({ role: "assistant", content: combinedRound, blocks: parsedBlocks });
+      } else {
+        displayMessages.push({ role: "assistant", content: combinedRound });
+      }
+    }
   }
+
+  const signature = JSON.stringify(
+    displayMessages.map((m) => ({ role: m.role, blocks: m.blocks || null, content: m.content || "" }))
+  );
+  if (signature === lastMessagesSignature) return;
   lastMessagesSignature = signature;
 
-  if (!messages.length) {
+  const isAtBottom = els.messageList.scrollHeight - els.messageList.scrollTop - els.messageList.clientHeight <= 50;
+
+    if (!displayMessages.length) {
     els.messageList.innerHTML = `<div class="empty">暂无对话</div>`;
     return;
   }
 
-  els.messageList.innerHTML = messages
-    .map((message) => {
-      const role = escapeHtml(message.role || "assistant");
-      if (role === "assistant") {
-        return `<div class="message ${role}">${renderAssistantBlocks(messageBlocks(message))}</div>`;
-      }
-      return `<div class="message ${role}">${escapeHtml(String(message.content || ""))}</div>`;
-    })
-    .join("");
+  if (els.messageList.children.length === 1 && els.messageList.children[0].classList.contains("empty")) {
+    els.messageList.innerHTML = "";
+  }
 
-  hydrateWidgets(els.messageList);
-  els.messageList.scrollTop = els.messageList.scrollHeight;
+  const currentNodes = Array.from(els.messageList.children);
+
+  for (let i = 0; i < displayMessages.length; i++) {
+    const msg = displayMessages[i];
+    const role = escapeHtml(msg.role || "assistant");
+    const sig = JSON.stringify({ role: msg.role, blocks: msg.blocks || null, content: msg.content || "" });
+    
+    let node = currentNodes[i];
+    if (node && node.dataset.sig === sig) {
+      continue;
+    }
+    
+    const inner = role === "assistant" 
+      ? renderAssistantBlocks(messageBlocks(msg)) 
+      : escapeHtml(String(msg.content || ""));
+
+    if (!node) {
+      node = document.createElement("div");
+      els.messageList.appendChild(node);
+    }
+    
+    node.className = `message ${role}`;
+    node.dataset.sig = sig;
+    node.innerHTML = inner;
+    hydrateWidgets(node);
+  }
+
+  // Remove excess nodes
+  for (let i = displayMessages.length; i < currentNodes.length; i++) {
+    if (currentNodes[i] && currentNodes[i].parentNode) {
+      currentNodes[i].parentNode.removeChild(currentNodes[i]);
+    }
+  }
+
+
+  if (isAtBottom) {
+    els.messageList.scrollTop = els.messageList.scrollHeight;
+  }
 }
 
 function hydrateWidgets(root) {
@@ -1728,10 +1834,9 @@ function renderState(state) {
   if (els.saveModelConfigBtn) {
     els.saveModelConfigBtn.disabled = status === "running" || status === "awaiting_approval";
   }
-  els.modelOutput.innerHTML = renderModelOutput(state.model_output || "");
-  els.modelOutput.scrollTop = els.modelOutput.scrollHeight;
 
-  renderMessages(state.messages || []);
+
+  renderMessages(state.messages || [], status, state.model_output);
   renderEvents(state.events || []);
   renderApprovals(state.world_state?.pending_approvals || []);
   renderTodos(state.todo_list || []);
@@ -1787,6 +1892,8 @@ function connectWs() {
       const payload = JSON.parse(message.data);
       if (payload.state) {
         renderState(payload.state);
+      } else if (payload.type === "stream") {
+        renderState({ model_output: (currentState.model_output || "") + (payload.content || "") });
       }
     } catch (error) {
       console.error("Failed to render websocket update", error);
@@ -1941,4 +2048,12 @@ initializeProgressSplitResizer();
 loadWebConfig();
 loadModelConfig();
 loadState();
+
+if (els.toggleRuntimeBtn) {
+  els.toggleRuntimeBtn.addEventListener("click", () => {
+    els.workspace.classList.toggle("runtime-collapsed");
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+  });
+}
+
 connectWs();

@@ -511,6 +511,18 @@ def serialize_message(message: Any) -> dict[str, Any]:
         role = "tool"
 
     content = getattr(message, "content", "")
+    
+    if role == "assistant":
+        additional_kwargs = getattr(message, "additional_kwargs", {}) or {}
+        reasoning = ""
+        for key in ("reasoning_content", "thinking", "reasoning", "reasoning_delta"):
+            val = additional_kwargs.get(key)
+            if val:
+                reasoning = str(val)
+                break
+        if reasoning and "<think>" not in content:
+            content = f"<think>\n{reasoning.strip()}\n</think>\n\n" + content
+
     payload: dict[str, Any] = {
         "role": role,
         "content": content,
@@ -547,7 +559,9 @@ def post_process_serialized_messages(messages: list[dict[str, Any]], session: "C
                                     "color": pt.get("color"),
                                     "description": pt.get("description"),
                                 } for pt in stored_card.get("points") or []
-                            ]
+                            ],
+                            "lines": stored_card.get("lines") or [],
+                            "geojson": stored_card.get("geojson")
                         }
                 blocks_copy.append(block_copy)
             msg_copy["blocks"] = blocks_copy
@@ -685,6 +699,11 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                         final_reply = message
 
         if final_reply:
+            import re
+            model_output = session.state.get("model_output", "")
+            final_content = re.sub(r"\n*\[\[MODEL_OUTPUT_ROUND_BREAK\]\]\n*", "\n\n", model_output)
+            final_reply.content = final_content.strip()
+
             session.memory_messages.append(final_reply)
             session.memory_messages = trim_messages(session.memory_messages, session_id=session_id)
             session.complete_conversation_turn(serialize_message(final_reply))
@@ -713,7 +732,7 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/api/model-config")

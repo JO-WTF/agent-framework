@@ -170,4 +170,4 @@ tools:
   reverse_geocode: |
     当需要将给定的单个经纬度坐标或同时将多个坐标批量（分别传入 latitude 列表和 longitude 列表，长度必须一致）逆解析为具体人类可读的物理地址（如街道名称、城市名）时，调用此工具。如果传入列表，会自动进行批量逆向地理编码以减少调用次数（单次最多 20 个）。
   render_map_card: |
-    当需要在前端渲染交互式地图卡片展示给用户时，调用此工具。你可以传递 points（每个点包含 latitude、longitude、label、description、color），也可以传递 lines（每条线包含 coordinates）。对于地图查看、地图展示、可视化城市或地点等需求，除非用户明确要求特定库、文件格式或导出产物，否则优先使用此工具。
+    当需要在前端渲染交互式地图卡片展示给用户时，调用此工具。你可以传递 points（每个点包含 latitude、longitude、label、description、color），传递 lines（每条线包含 coordinates）。如果是更复杂的线段、多边形 (polygon/multipolygon) 或是其他标准形状，你可以直接传递符合 GeoJSON 规范的 geojson 参数（支持 FeatureCollection 或 Feature 列表）。对于地图查看、地图展示、可视化城市或地点等需求，除非用户明确要求特定库、文件格式或导出产物，否则优先使用此工具。

@@ -110,6 +110,7 @@ def build_map_card_payload(
     title: str,
     points: list[dict[str, Any]] | None = None,
     lines: list[dict[str, Any]] | None = None,
+    geojson: dict[str, Any] | list[dict[str, Any]] | str | None = None,
     center: dict[str, Any] | None = None,
     zoom: float | int | None = None,
     note: str | None = None,
@@ -118,8 +119,19 @@ def build_map_card_payload(
     if len(normalized_points) > MAX_MAP_POINTS:
         raise ValueError(f"points 超过上限 {MAX_MAP_POINTS}。")
     normalized_lines = [_normalize_line(line, idx) for idx, line in enumerate(lines or [])]
-    if not normalized_points and not normalized_lines:
-        raise ValueError("地图卡片至少需要一个点或一条线。")
+    
+    parsed_geojson = None
+    if geojson:
+        if isinstance(geojson, str):
+            try:
+                parsed_geojson = json.loads(geojson)
+            except Exception:
+                pass
+        else:
+            parsed_geojson = geojson
+            
+    if not normalized_points and not normalized_lines and not parsed_geojson:
+        raise ValueError("地图卡片至少需要一个点、一条线或 GeoJSON 数据。")
 
     return {
         "id": f"map-{uuid.uuid4().hex[:12]}",
@@ -127,6 +139,7 @@ def build_map_card_payload(
         "note": (note or "").strip(),
         "points": normalized_points,
         "lines": normalized_lines,
+        "geojson": parsed_geojson,
         "center": _normalize_center(center, normalized_points, normalized_lines),
         "zoom": _normalize_zoom(zoom),
         "created_at": datetime.now().isoformat(),
@@ -151,6 +164,7 @@ async def render_map_card(
     title: str,
     points: list[dict[str, Any]] | None = None,
     lines: list[dict[str, Any]] | None = None,
+    geojson: dict[str, Any] | list[dict[str, Any]] | str | None = None,
     center: dict[str, Any] | None = None,
     zoom: float | None = None,
     note: str | None = None,
@@ -160,7 +174,7 @@ async def render_map_card(
     logger.info(f"🗺️ \033[94m[触发工具: 地图卡片] -> {title}\033[0m")
 
     try:
-        card = build_map_card_payload(title=title, points=points, lines=lines, center=center, zoom=zoom, note=note)
+        card = build_map_card_payload(title=title, points=points, lines=lines, geojson=geojson, center=center, zoom=zoom, note=note)
     except Exception as exc:
         text = f"执行失败: 地图卡片参数无效: {exc}"
         store_tool_result_for_current_session("render_map_card", text, {"status": "invalid_args", "title": title})
