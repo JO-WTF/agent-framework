@@ -393,7 +393,7 @@ async def fix_node(state: ToolExecutionState, config: RunnableConfig) -> dict[st
 
     try:
         log_llm_request("tool_fix_args", messages)
-        response = await llm_client.ainvoke(messages, config=config)
+        response = await llm_client.ainvoke(messages, config={**config, "callbacks": []})
         log_llm_response("tool_fix_args", response)
         response_text = str(getattr(response, "content", response))
         payload = _extract_json_object(response_text)
