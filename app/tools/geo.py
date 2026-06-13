@@ -22,7 +22,7 @@ async def get_administrative_regions(country_code: str, level: str = "1") -> str
     """
     url = f"https://www.geoboundaries.org/api/current/gbOpen/{country_code}/ADM{level}/"
     try:
-        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=10.0, verify=False, follow_redirects=True) as client:
             response = await client.get(url)
             if response.status_code != 200:
                 return f"获取失败: HTTP {response.status_code} - 可能是国家代码或层级不支持。"
@@ -59,7 +59,7 @@ async def get_administrative_boundary(country_code: str, region_name: str, level
     """
     url = f"https://www.geoboundaries.org/api/current/gbOpen/{country_code}/ADM{level}/"
     try:
-        async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=20.0, verify=False, follow_redirects=True) as client:
             response = await client.get(url)
             if response.status_code != 200:
                 return f"获取失败: HTTP {response.status_code}。"
@@ -117,7 +117,7 @@ async def get_route_directions(start_lat: float, start_lon: float, end_lat: floa
     
     url = f"http://router.project-osrm.org/route/v1/{profile}/{start_lon},{start_lat};{end_lon},{end_lat}?overview=simplified&geometries=geojson"
     try:
-        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=10.0, verify=False, follow_redirects=True) as client:
             response = await client.get(url)
             if response.status_code != 200:
                 return f"路线规划失败: OSRM 返回 {response.status_code}"
@@ -201,7 +201,7 @@ async def get_elevation(lat: float, lon: float) -> str:
     """
     url = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{lon}"
     try:
-        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=10.0, verify=False, follow_redirects=True) as client:
             response = await client.get(url)
             if response.status_code != 200:
                 return f"高程获取失败: {response.status_code}"
