@@ -694,7 +694,7 @@ function createWidgetCard(placeholder, { title, icon, fullscreen = false } = {})
   return { card, header, body };
 }
 
-function renderMapWidget(placeholder, props) {
+function renderMapWidget(placeholder, props, config) {
   const { body } = createWidgetCard(placeholder, { title: "地图", icon: "fa-solid fa-map-location-dot", fullscreen: true });
   const mapEl = document.createElement("div");
   mapEl.className = "widget-map";
@@ -705,58 +705,96 @@ function renderMapWidget(placeholder, props) {
     return;
   }
 
-  const token = props.access_token || mapboxAccessToken;
+  // Handle use_stored_card
+  let actualProps = { ...props };
+  if (props.use_stored_card && config && config.id && currentState && Array.isArray(currentState.map_cards)) {
+    const storedCard = currentState.map_cards.find(c => c.id === config.id);
+    if (storedCard) {
+      actualProps = { ...actualProps, ...storedCard };
+    }
+  }
+
+  const token = actualProps.access_token || mapboxAccessToken;
   if (!token) {
-    // Token may load asynchronously after the message renders; retry once ready.
     mapEl.className = "widget-map widget-map-pending";
     mapEl.textContent = "正在加载地图…（未配置 Mapbox Access Token）";
     pendingMapWidgets.push(() => {
-      if (mapEl.isConnected && (props.access_token || mapboxAccessToken)) {
+      if (mapEl.isConnected && (actualProps.access_token || mapboxAccessToken)) {
         mapEl.className = "widget-map";
         mapEl.textContent = "";
-        renderMapInstance(placeholder, mapEl, props);
+        renderMapInstance(placeholder, mapEl, actualProps);
       }
     });
     return;
   }
 
-  renderMapInstance(placeholder, mapEl, props);
+  renderMapInstance(placeholder, mapEl, actualProps);
 }
 
 function renderMapInstance(placeholder, mapEl, props) {
   mapboxgl.accessToken = props.access_token || mapboxAccessToken;
 
-  const center = props.center || {};
-  const lat = Number(center.lat ?? 0);
-  const lng = Number(center.lng ?? 0);
-  const zoom = Number(props.zoom ?? 10);
-  const style = props.style || "mapbox://styles/mapbox/streets-v12";
-  const markers = Array.isArray(props.markers) ? props.markers : [];
+  const points = Array.isArray(props.points) ? props.points : (Array.isArray(props.markers) ? props.markers : []);
+  const lines = Array.isArray(props.lines) ? props.lines : [];
+  const geojsonData = props.geojson;
 
-  // Calculate bounding box of all markers to auto-fit them
+  // Auto fit bounds
   const bounds = new mapboxgl.LngLatBounds();
   let hasElements = false;
-  markers.forEach((marker) => {
-    const mLat = Number(marker.lat);
-    const mLng = Number(marker.lng);
-    if (!Number.isNaN(mLat) && !Number.isNaN(mLng)) {
-      bounds.extend([mLng, mLat]);
+
+  points.forEach((pt) => {
+    const lat = Number(pt.lat ?? pt.latitude);
+    const lng = Number(pt.lng ?? pt.longitude);
+    if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+      bounds.extend([lng, lat]);
       hasElements = true;
     }
   });
 
+  lines.forEach((line) => {
+    (line.coordinates || []).forEach(coord => {
+      if (coord && coord.length >= 2) {
+        bounds.extend([coord[0], coord[1]]); // Mapbox is [lng, lat]
+        hasElements = true;
+      }
+    });
+  });
+
+  if (geojsonData) {
+    // A simple recursive search for coordinates in GeoJSON
+    const findCoords = (obj) => {
+      if (!obj) return;
+      if (Array.isArray(obj)) {
+        if (obj.length === 2 && typeof obj[0] === 'number' && typeof obj[1] === 'number') {
+          bounds.extend([obj[0], obj[1]]);
+          hasElements = true;
+        } else {
+          obj.forEach(findCoords);
+        }
+      } else if (typeof obj === 'object') {
+        Object.values(obj).forEach(findCoords);
+      }
+    };
+    findCoords(geojsonData);
+  }
+
   const mapOptions = {
     container: mapEl,
-    style,
-    projection: "mercator", // Flat projection instead of globe
+    style: props.style || "mapbox://styles/mapbox/streets-v12",
+    projection: "mercator",
   };
 
-  if (hasElements) {
-    mapOptions.bounds = bounds;
-    mapOptions.fitBoundsOptions = { padding: 40, maxZoom: 15 };
-  } else {
+  const center = props.center || {};
+  const lat = Number(center.lat ?? center.latitude ?? 0);
+  const lng = Number(center.lng ?? center.longitude ?? 0);
+  const zoom = Number(props.zoom ?? 10);
+
+  if (props.center || !hasElements) {
     mapOptions.center = [lng, lat];
     mapOptions.zoom = zoom;
+  } else if (hasElements) {
+    mapOptions.bounds = bounds;
+    mapOptions.fitBoundsOptions = { padding: 40, maxZoom: 15 };
   }
 
   let map;
@@ -770,66 +808,97 @@ function renderMapInstance(placeholder, mapEl, props) {
 
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
 
-  markers.forEach((marker) => {
-    const mLat = Number(marker.lat);
-    const mLng = Number(marker.lng);
+  map.on('load', () => {
+    // Add geojson if present
+    if (geojsonData) {
+      map.addSource('geojson-data', {
+        type: 'geojson',
+        data: geojsonData
+      });
+      
+      // Render polygons
+      map.addLayer({
+        id: 'geojson-fill',
+        type: 'fill',
+        source: 'geojson-data',
+        paint: {
+          'fill-color': '#088',
+          'fill-opacity': 0.4
+        },
+        filter: ['==', '$type', 'Polygon']
+      });
+
+      // Render lines/borders
+      map.addLayer({
+        id: 'geojson-line',
+        type: 'line',
+        source: 'geojson-data',
+        paint: {
+          'line-color': '#088',
+          'line-width': 3
+        },
+        filter: ['in', '$type', 'Polygon', 'LineString']
+      });
+    }
+
+    // Add lines
+    lines.forEach((line, idx) => {
+      const sourceId = `line-source-${idx}`;
+      map.addSource(sourceId, {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: line.coordinates
+          }
+        }
+      });
+      map.addLayer({
+        id: `line-layer-${idx}`,
+        type: 'line',
+        source: sourceId,
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': line.color || '#f97316',
+          'line-width': 4
+        }
+      });
+    });
+  });
+
+  // Add points
+  points.forEach((pt) => {
+    const mLat = Number(pt.lat ?? pt.latitude);
+    const mLng = Number(pt.lng ?? pt.longitude);
     if (Number.isNaN(mLat) || Number.isNaN(mLng)) return;
 
-    // Create a custom circle DOM element
     const el = document.createElement("div");
     el.className = "custom-map-marker";
-    const color = marker.color || "#2563eb";
     el.style.width = "14px";
     el.style.height = "14px";
     el.style.borderRadius = "50%";
-    el.style.backgroundColor = color;
+    el.style.backgroundColor = pt.color || "#2563eb";
     el.style.border = "2px solid #ffffff";
     el.style.boxShadow = "0 1px 3px rgba(0, 0, 0, 0.4)";
     el.style.cursor = "pointer";
 
-    if (marker.label) {
-      el.title = marker.label;
-    }
-
+    if (pt.label) el.title = pt.label;
     const mapMarker = new mapboxgl.Marker(el).setLngLat([mLng, mLat]);
 
-    if (marker.label) {
-      // Tooltip through hover (mouseenter / mouseleave)
-      const popup = new mapboxgl.Popup({
-        offset: 10,
-        closeButton: false,
-        closeOnClick: false,
-      }).setText(String(marker.label));
+    if (pt.label || pt.description) {
+      const popupHTML = `<strong>${escapeHtml(pt.label || '点')}</strong>${pt.description ? `<br/>${escapeHtml(pt.description)}` : ''}`;
+      const popup = new mapboxgl.Popup({ offset: 10, closeButton: false, closeOnClick: false }).setHTML(popupHTML);
 
-      el.addEventListener("mouseenter", () => {
-        popup.setLngLat([mLng, mLat]).addTo(map);
-      });
-      el.addEventListener("mouseleave", () => {
-        popup.remove();
-      });
+      el.addEventListener("mouseenter", () => popup.setLngLat([mLng, mLat]).addTo(map));
+      el.addEventListener("mouseleave", () => popup.remove());
     }
-
     mapMarker.addTo(map);
   });
-
-  if (hasElements) {
-    map.on("load", () => {
-      map.fitBounds(bounds, { padding: 40, maxZoom: 15, animate: false });
-    });
-  }
-
-  const refresh = () => map.resize();
-  setTimeout(() => {
-    map.resize();
-    if (hasElements) {
-      map.fitBounds(bounds, { padding: 40, maxZoom: 15, animate: false });
-    }
-  }, 100);
-  placeholder.addEventListener("fullscreenchange", () => setTimeout(refresh, 50));
-  document.addEventListener("fullscreenchange", refresh);
-  if (window.ResizeObserver) {
-    new ResizeObserver(refresh).observe(mapEl);
-  }
 }
 
 function renderWeatherWidget(placeholder, props) {
