@@ -789,12 +789,14 @@ function renderMapInstance(placeholder, mapEl, props) {
   const lng = Number(center.lng ?? center.longitude ?? 0);
   const zoom = Number(props.zoom ?? 10);
 
-  if (props.center || !hasElements) {
-    mapOptions.center = [lng, lat];
-    mapOptions.zoom = zoom;
-  } else if (hasElements) {
+  // If there are elements to fit, and the user didn't explicitly specify a zoom, fit bounds.
+  // Actually, just fit bounds if we have elements, it's almost always what we want.
+  if (hasElements) {
     mapOptions.bounds = bounds;
     mapOptions.fitBoundsOptions = { padding: 40, maxZoom: 15 };
+  } else {
+    mapOptions.center = [lng, lat];
+    mapOptions.zoom = zoom;
   }
 
   let map;
