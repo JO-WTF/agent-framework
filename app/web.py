@@ -84,14 +84,77 @@ class ConsoleSession:
             "current_node": "",
             "task_complexity": "unknown",
             "todo_list": [],
+            "context_tags": ["general"],
+            "agent_role": "general",
             "model_output": "",
             "tool_runs": [],
             "events": [],
             "messages": [],
+            "conversation_turns": [],
+            "active_turn_id": None,
+            "map_cards": [],
             "model_config": get_llm_settings(),
             "llm_active_node": None,
             "active_skills": [],
         }
+
+    def start_conversation_turn(self, user_message: dict[str, Any]) -> str:
+        turn_id = f"turn-{uuid.uuid4().hex[:12]}"
+        turns = list(self.state.get("conversation_turns") or [])
+        turns.append({
+            "id": turn_id,
+            "user": user_message,
+            "assistant": None,
+            "cards": [],
+        })
+        self.state["conversation_turns"] = turns[-100:]
+        self.state["active_turn_id"] = turn_id
+        return turn_id
+
+    def complete_conversation_turn(self, assistant_message: dict[str, Any]) -> None:
+        turn_id = self.state.get("active_turn_id")
+        turns = list(self.state.get("conversation_turns") or [])
+        if not turn_id or not turns:
+            return
+        for turn in reversed(turns):
+            if turn.get("id") == turn_id:
+                turn["assistant"] = assistant_message
+                break
+        self.state["conversation_turns"] = turns
+
+    def add_card_to_active_turn(self, card_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        card = {
+            "id": payload.get("id") or f"card-{uuid.uuid4().hex[:12]}",
+            "type": card_type,
+            "payload": payload,
+            "created_at": payload.get("created_at") or datetime.now().isoformat(),
+        }
+        turn_id = self.state.get("active_turn_id")
+        turns = list(self.state.get("conversation_turns") or [])
+        if turn_id and turns:
+            for turn in reversed(turns):
+                if turn.get("id") == turn_id:
+                    cards = [c for c in turn.get("cards", []) if c.get("id") != card["id"]]
+                    cards.append(card)
+                    turn["cards"] = cards
+                    break
+            self.state["conversation_turns"] = turns
+        return card
+
+    async def add_map_card(self, card: dict[str, Any]) -> None:
+        cards = [c for c in self.state.get("map_cards", []) if c.get("id") != card.get("id")]
+        cards.append(card)
+        self.state["map_cards"] = cards[-50:]
+        conversation_card = self.add_card_to_active_turn("map", card)
+        await self.publish({
+            "type": "map_card",
+            "title": f"地图卡片: {card.get('title', '地图展示')}",
+            "details": {"card": card, "conversation_card": conversation_card, "turn_id": self.state.get("active_turn_id")},
+        })
+
+    def get_serialized_messages(self) -> list[dict[str, Any]]:
+        raw_msgs = [serialize_message(m) for m in self.memory_messages]
+        return post_process_serialized_messages(raw_msgs, self)
 
     def snapshot(self) -> dict[str, Any]:
         return self.state
@@ -147,8 +210,9 @@ class ConsoleSession:
         now = datetime.now().strftime("%H:%M:%S")
         events = self.state["events"]
         last_event = events[-1] if events else None
+        active_node = self.state.get("llm_active_node") or "agent"
 
-        if last_event and last_event.get("type") == "node_update" and last_event.get("node") == "agent":
+        if last_event and last_event.get("type") == "node_update" and last_event.get("node") == active_node:
             details = last_event.setdefault("details", {})
             llm_run = details.setdefault("llm_run", {})
 
@@ -182,7 +246,7 @@ class ConsoleSession:
             llm_run["think"] = think
             llm_run["message"] = message
 
-            last_event["title"] = f"节点更新: agent (正在调用模型, {llm_run['token_count']} tokens)"
+            last_event["title"] = f"节点更新: {active_node} (正在调用模型, {llm_run['token_count']} tokens)"
             last_event["updated_at"] = now
             await self.broadcast(last_event)
 
@@ -190,8 +254,9 @@ class ConsoleSession:
         now = datetime.now().strftime("%H:%M:%S")
         events = self.state["events"]
         last_event = events[-1] if events else None
+        active_node = self.state.get("llm_active_node") or "agent"
 
-        if last_event and last_event.get("type") == "node_update" and last_event.get("node") == "agent":
+        if last_event and last_event.get("type") == "node_update" and last_event.get("node") == active_node:
             details = last_event.setdefault("details", {})
             llm_run = details.setdefault("llm_run", {})
 
@@ -209,7 +274,7 @@ class ConsoleSession:
             llm_run["message"] = message
 
             llm_run["status"] = "completed"
-            last_event["title"] = f"节点更新: agent (模型调用完成, {llm_run.get('token_count', 0)} tokens)"
+            last_event["title"] = f"节点更新: {active_node} (模型调用完成, {llm_run.get('token_count', 0)} tokens)"
             last_event["updated_at"] = now
             await self.broadcast(last_event)
 
@@ -239,10 +304,15 @@ class ConsoleSession:
             "current_node": "",
             "task_complexity": "unknown",
             "todo_list": [],
+            "context_tags": ["general"],
+            "agent_role": "general",
             "model_output": "",
             "tool_runs": [],
             "events": [],
             "messages": [],
+            "conversation_turns": [],
+            "active_turn_id": None,
+            "map_cards": [],
             "model_config": get_llm_settings(),
             "llm_active_node": None,
             "active_skills": [],
@@ -292,11 +362,12 @@ class WebConsoleCallback(AsyncCallbackHandler):
         self.session = session
 
     async def on_llm_start(self, serialized, prompts, **kwargs):
-        self.session.state["current_node"] = "agent"
+        node_name = self.session.state.get("llm_active_node") or "agent"
+        self.session.state["current_node"] = node_name
         self.session.state["_thinking_field_used"] = False
         if self.session.state["model_output"]:
             self.session.state["model_output"] += "\n\n[[MODEL_OUTPUT_ROUND_BREAK]]\n\n"
-        await self.session.start_node_llm_run("agent", prompts)
+        await self.session.start_node_llm_run(node_name, prompts)
 
     async def on_llm_new_token(self, token: str, **kwargs) -> None:
         thinking, content = extract_thinking_and_content(kwargs.get("chunk"))
@@ -450,6 +521,38 @@ def serialize_message(message: Any) -> dict[str, Any]:
     return payload
 
 
+def post_process_serialized_messages(messages: list[dict[str, Any]], session: "ConsoleSession") -> list[dict[str, Any]]:
+    processed_messages = []
+    for msg in messages:
+        msg_copy = msg.copy()
+        if msg_copy.get("role") == "assistant" and "blocks" in msg_copy:
+            blocks_copy = []
+            for block in msg_copy["blocks"]:
+                block_copy = block.copy()
+                if block_copy.get("type") == "widget" and block_copy.get("widget_type") == "map":
+                    card_id = block_copy.get("id")
+                    stored_card = next((c for c in session.state.get("map_cards", []) if c.get("id") == card_id), None)
+                    if stored_card:
+                        block_copy["props"] = {
+                            "center": {
+                                "lat": stored_card["center"]["latitude"],
+                                "lng": stored_card["center"]["longitude"]
+                            } if stored_card.get("center") else {"lat": 0.0, "lng": 0.0},
+                            "zoom": stored_card.get("zoom") or 10.0,
+                            "markers": [
+                                {
+                                    "lat": pt["latitude"],
+                                    "lng": pt["longitude"],
+                                    "label": pt["label"]
+                                } for pt in stored_card.get("points") or []
+                            ]
+                        }
+                blocks_copy.append(block_copy)
+            msg_copy["blocks"] = blocks_copy
+        processed_messages.append(msg_copy)
+    return processed_messages
+
+
 def make_json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): make_json_safe(val) for key, val in value.items()}
@@ -580,7 +683,8 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
         if final_reply:
             session.memory_messages.append(final_reply)
             session.memory_messages = trim_messages(session.memory_messages, session_id=session_id)
-            session.state["messages"] = [serialize_message(m) for m in session.memory_messages]
+            session.complete_conversation_turn(serialize_message(final_reply))
+            session.state["messages"] = session.get_serialized_messages()
             await session.broadcast({"type": "messages_update", "title": "对话已更新", "details": {}})
 
         session.state["status"] = "idle"
@@ -645,6 +749,7 @@ async def chat(request: Request, payload: ChatRequest):
 
     user_message = HumanMessage(content=message)
     session.memory_messages.append(user_message)
+    session.start_conversation_turn(serialize_message(user_message))
     session.state.update({
         "status": "running",
         "current_node": "orchestrator",
@@ -655,7 +760,7 @@ async def chat(request: Request, payload: ChatRequest):
         "model_output": "",
         "tool_runs": [],
         "events": [],
-        "messages": [serialize_message(m) for m in session.memory_messages],
+        "messages": session.get_serialized_messages(),
         "model_config": model_config,
         "llm_active_node": None,
     })
@@ -675,6 +780,7 @@ async def resume_after_approval(session_id: str, session: ConsoleSession, approv
     target = approval.get("target_uri") or approval.get("host_path") or approval.get("target_path", "")
     message = HumanMessage(content=f"用户已处理审批 {approval.get('id')}: {status} {target}。请基于当前 world_state 继续任务。")
     session.memory_messages.append(message)
+    session.start_conversation_turn(serialize_message(message))
     if not session.model_config_raw:
         session.model_config_raw = normalize_llm_settings(None)
         session.state["model_config"] = redact_llm_settings(session.model_config_raw)
@@ -683,7 +789,7 @@ async def resume_after_approval(session_id: str, session: ConsoleSession, approv
         "current_node": "orchestrator",
         "model_output": "",
         "tool_runs": [],
-        "messages": [serialize_message(m) for m in session.memory_messages],
+        "messages": session.get_serialized_messages(),
         "llm_active_node": None,
     })
     await session.publish({

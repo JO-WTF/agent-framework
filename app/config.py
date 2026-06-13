@@ -30,6 +30,7 @@ class AgentState(TypedDict):
     active_skills: NotRequired[list[str]]
     world_state: NotRequired[dict[str, Any]]
     last_node: NotRequired[str]
+    agent_role: NotRequired[str]  # Active specialized agent role
     orchestrator_next: NotRequired[str]
     orchestrator_think: NotRequired[str]
     orchestrator_message: NotRequired[str]

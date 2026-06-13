@@ -151,12 +151,16 @@ async def memory_manager_node(state: AgentState) -> dict[str, Any]:
     return updates
 
 
+def _route_to_selected_agent(state: AgentState) -> str:
+    return "network_specialist_agent" if state.get("agent_role") == "network" else "agent"
+
+
 def route_after_memory(state: AgentState) -> str:
     """Route after memory consolidation, using the node that produced the latest update."""
     last_message = state["messages"][-1]
     origin = state.get("last_node", "")
 
-    if origin == "agent":
+    if origin in {"agent", "network_specialist_agent"}:
         if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
             return "tools"
         return "orchestrator"
@@ -167,10 +171,10 @@ def route_after_memory(state: AgentState) -> str:
     if origin == "orchestrator":
         if state.get("orchestrator_next") == "evaluate" and isinstance(last_message, AIMessage):
             return "evaluate"
-        return "agent"
+        return _route_to_selected_agent(state)
 
     if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
         return "tools"
     if isinstance(last_message, ToolMessage):
         return "orchestrator"
-    return "agent"
+    return _route_to_selected_agent(state)

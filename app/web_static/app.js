@@ -554,15 +554,37 @@ function renderMapInstance(placeholder, mapEl, props) {
   const lng = Number(center.lng ?? 0);
   const zoom = Number(props.zoom ?? 10);
   const style = props.style || "mapbox://styles/mapbox/streets-v12";
+  const markers = Array.isArray(props.markers) ? props.markers : [];
+
+  // Calculate bounding box of all markers to auto-fit them
+  const bounds = new mapboxgl.LngLatBounds();
+  let hasElements = false;
+  markers.forEach((marker) => {
+    const mLat = Number(marker.lat);
+    const mLng = Number(marker.lng);
+    if (!Number.isNaN(mLat) && !Number.isNaN(mLng)) {
+      bounds.extend([mLng, mLat]);
+      hasElements = true;
+    }
+  });
+
+  const mapOptions = {
+    container: mapEl,
+    style,
+    projection: "mercator", // Flat projection instead of globe
+  };
+
+  if (hasElements) {
+    mapOptions.bounds = bounds;
+    mapOptions.fitBoundsOptions = { padding: 40, maxZoom: 15 };
+  } else {
+    mapOptions.center = [lng, lat];
+    mapOptions.zoom = zoom;
+  }
 
   let map;
   try {
-    map = new mapboxgl.Map({
-      container: mapEl,
-      style,
-      center: [lng, lat],
-      zoom,
-    });
+    map = new mapboxgl.Map(mapOptions);
   } catch (error) {
     mapEl.className = "widget-map widget-map-pending";
     mapEl.textContent = `地图加载失败：${error.message}`;
@@ -571,21 +593,62 @@ function renderMapInstance(placeholder, mapEl, props) {
 
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
 
-  const markers = Array.isArray(props.markers) ? props.markers : [];
   markers.forEach((marker) => {
     const mLat = Number(marker.lat);
     const mLng = Number(marker.lng);
     if (Number.isNaN(mLat) || Number.isNaN(mLng)) return;
-    const mapMarker = new mapboxgl.Marker().setLngLat([mLng, mLat]);
+
+    // Create a custom circle DOM element
+    const el = document.createElement("div");
+    el.className = "custom-map-marker";
+    const color = marker.color || "#2563eb";
+    el.style.width = "14px";
+    el.style.height = "14px";
+    el.style.borderRadius = "50%";
+    el.style.backgroundColor = color;
+    el.style.border = "2px solid #ffffff";
+    el.style.boxShadow = "0 1px 3px rgba(0, 0, 0, 0.4)";
+    el.style.cursor = "pointer";
+
     if (marker.label) {
-      mapMarker.setPopup(new mapboxgl.Popup({ offset: 24 }).setText(String(marker.label)));
+      el.title = marker.label;
     }
+
+    const mapMarker = new mapboxgl.Marker(el).setLngLat([mLng, mLat]);
+
+    if (marker.label) {
+      // Tooltip through hover (mouseenter / mouseleave)
+      const popup = new mapboxgl.Popup({
+        offset: 10,
+        closeButton: false,
+        closeOnClick: false,
+      }).setText(String(marker.label));
+
+      el.addEventListener("mouseenter", () => {
+        popup.setLngLat([mLng, mLat]).addTo(map);
+      });
+      el.addEventListener("mouseleave", () => {
+        popup.remove();
+      });
+    }
+
     mapMarker.addTo(map);
   });
 
+  if (hasElements) {
+    map.on("load", () => {
+      map.fitBounds(bounds, { padding: 40, maxZoom: 15, animate: false });
+    });
+  }
+
   const refresh = () => map.resize();
-  setTimeout(refresh, 0);
-  placeholder.addEventListener("fullscreenchange", () => setTimeout(refresh, 0));
+  setTimeout(() => {
+    map.resize();
+    if (hasElements) {
+      map.fitBounds(bounds, { padding: 40, maxZoom: 15, animate: false });
+    }
+  }, 100);
+  placeholder.addEventListener("fullscreenchange", () => setTimeout(refresh, 50));
   document.addEventListener("fullscreenchange", refresh);
   if (window.ResizeObserver) {
     new ResizeObserver(refresh).observe(mapEl);
@@ -1267,6 +1330,7 @@ function routeLabel(route) {
     START: "START",
     orchestrator: "Orchestrator",
     agent: "Agent",
+    network_specialist_agent: "Network Specialist Agent",
     tools: "Tools",
     memory: "Memory",
     evaluate: "Evaluator",
@@ -1336,6 +1400,7 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels, llmActiveNode)
     S: mermaidNodeClass("START", active, visited),
     O: mermaidNodeClass("orchestrator", active, visited),
     A: mermaidNodeClass("agent", active, visited),
+    N: mermaidNodeClass("network_specialist_agent", active, visited),
     E: mermaidNodeClass("evaluate", active, visited),
     X: mermaidNodeClass("END", active, visited),
     T: mermaidNodeClass("tools", active, visited),
@@ -1351,6 +1416,8 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels, llmActiveNode)
     ["orchestrator->memory", "O", "M", "solid"],
     ["memory->agent", "M", "A", "solid"],
     ["agent->memory", "A", "M", "solid"],
+    ["memory->network_specialist_agent", "M", "N", "solid"],
+    ["network_specialist_agent->memory", "N", "M", "solid"],
     ["memory->tools", "M", "T", "dotted"],
     ["tools->memory", "T", "M", "dotted"],
     ["memory->orchestrator", "M", "O", "solid"],
@@ -1362,6 +1429,7 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels, llmActiveNode)
     S: 'S(["START"])',
     O: 'O["Orchestrator"]',
     A: 'A["Agent"]',
+    N: 'N["Network Specialist Agent"]',
     E: 'E["Evaluator"]',
     X: 'X(["END"])',
     T: 'T["Tools"]',
