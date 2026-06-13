@@ -41,7 +41,7 @@ def _resolve_string(value: str) -> Any:
     
     # Read the tool result bypassing standard length limits to get full data
     try:
-        record = read_tool_result_for_current_session(ref_id=ref_id, offset=0, limit=10000000)
+        record = read_tool_result_for_current_session(ref_id=ref_id, offset=0, limit=-1)
     except Exception as e:
         raise ValueError(f"Failed to read reference '{ref_id}': {str(e)}")
     

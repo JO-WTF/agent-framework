@@ -19,6 +19,7 @@ async def list_tool_results(limit: int = 10, config: RunnableConfig = None) -> s
 
 @tool(description=PROMPTS["tools"]["read_tool_result"])
 async def read_tool_result(ref_id: str, offset: int = 0, limit: int = 8000, config: RunnableConfig = None) -> str:
+    limit = min(max(1, limit), 20000)
     get_session_id_from_config_or_context(config)
     try:
         result = read_tool_result_for_current_session(ref_id=ref_id, offset=offset, limit=limit)

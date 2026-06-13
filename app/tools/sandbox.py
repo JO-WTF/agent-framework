@@ -298,10 +298,16 @@ class DockerSandboxRuntime:
             "--tmpfs",
             "/workspace/shared:rw,nosuid,nodev,size=1m",
         ]
+        
+        tool_results_path = get_session_dir(self.session_id) / "tool_results.json"
+        if not tool_results_path.exists():
+            tool_results_path.write_text("[]", encoding="utf-8")
+
         args.extend(self._environment_args())
         args.extend([
             "-v",
             f"{self.work_dir}:/workspace/work:rw",
+            f"{tool_results_path}:/workspace/tool_results.json:ro",
             *self._shared_mount_args(),
             "-w",
             os.getenv("AGENT_SANDBOX_WORKDIR", "/workspace/work"),

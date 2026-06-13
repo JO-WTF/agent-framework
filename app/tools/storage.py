@@ -35,13 +35,19 @@ def read_tool_result_for_current_session(ref_id: str, offset: int = 0, limit: in
     if not cleaned_ref:
         raise ValueError("ref_id is required")
     safe_offset = max(0, int(offset))
-    safe_limit = max(1, min(int(limit), 20000))
+    if limit is None or int(limit) <= 0:
+        safe_limit = None
+    else:
+        safe_limit = int(limit)
 
     for record in _read_current_tool_records():
         if record.get("id") != cleaned_ref:
             continue
         content = str(record.get("content", ""))
-        chunk = content[safe_offset : safe_offset + safe_limit]
+        if safe_limit is None:
+            chunk = content[safe_offset:]
+        else:
+            chunk = content[safe_offset : safe_offset + safe_limit]
         next_offset = safe_offset + len(chunk)
         return {
             "id": record.get("id", ""),
