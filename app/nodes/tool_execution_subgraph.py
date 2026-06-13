@@ -301,9 +301,18 @@ async def execute_node(state: ToolExecutionState, config: RunnableConfig) -> dic
         }
 
     try:
+        from app.tools.storage import StructuredToolResult
+        from app.memory.store import store_tool_result
+        
         resolved_args = resolve_tool_args(args)
         result = await tool.ainvoke(resolved_args, config=config)
-        result_text = str(result)
+        
+        if isinstance(result, StructuredToolResult):
+            ref_id = store_tool_result(tool_name, result.raw_output, session_id=session_id, metadata=result.metadata)
+            result_text = result.agent_message.replace("{{REF_ID}}", ref_id)
+        else:
+            result_text = str(result)
+            
         status, failure_reason = classify_tool_result(tool_name, result_text)
         required_action = (
             build_dependency_required_action(extract_missing_python_dependency(result_text))

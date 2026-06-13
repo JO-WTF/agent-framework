@@ -5,7 +5,21 @@ from app.runtime_paths import get_session_file_path
 from app.tools.context import ensure_session_id
 
 
+
+class StructuredToolResult:
+    """
+    A mechanism for tools to return BOTH a short instructional message to the agent
+    AND a large structured payload that is archived in the background.
+    
+    If `{{REF_ID}}` is present in `agent_message`, it will be replaced by the generated ref_id.
+    """
+    def __init__(self, agent_message: str, raw_output: str, metadata: dict | None = None):
+        self.agent_message = agent_message
+        self.raw_output = raw_output
+        self.metadata = metadata
+
 def store_tool_result_for_current_session(tool_name: str, raw_output: str, metadata: dict | None = None) -> str:
+
     return store_tool_result(
         tool_name,
         raw_output,

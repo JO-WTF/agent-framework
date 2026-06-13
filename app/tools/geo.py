@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 from app.logging_config import logger
 from app.memory.store import save_agent_note
 from app.tools.context import get_session_id_from_config_or_context
-from app.tools.storage import store_tool_result_for_current_session
+from app.tools.storage import store_tool_result_for_current_session, StructuredToolResult
 
 @tool
 async def get_administrative_regions(country_code: str, level: str = "1") -> str:
@@ -91,8 +91,12 @@ async def get_administrative_boundary(country_code: str, region_name: str, level
                         "features": [f]
                     }
                     geojson_str = json.dumps(result_geojson, ensure_ascii=False)
-                    ref_id = store_tool_result_for_current_session("get_administrative_boundary", geojson_str, {"type": "geojson"})
-                    return f"成功提取 {shape_name} 的边界数据。数据格式为 GeoJSON (大小: {len(geojson_str)} 字节)。数据已存入后台引用，你可以使用宏语法 {{{{ref:{ref_id}}}}} 作为 geojson 参数的值传递给 map_card 的 geojson 参数！"
+                    agent_msg = f"成功提取 {shape_name} 的边界数据。数据格式为 GeoJSON (大小: {len(geojson_str)} 字节)。数据已存入后台引用，你可以使用宏语法 {{{{ref:{{{{REF_ID}}}}}}}} 作为 geojson 参数的值传递给 map_card 的 geojson 参数！"
+                    return StructuredToolResult(
+                        agent_message=agent_msg,
+                        raw_output=geojson_str,
+                        metadata={"type": "geojson"}
+                    )
             
             return f"未找到名为 '{region_name}' 的行政区。请先调用 get_administrative_regions 确认确切名称。"
     except Exception as e:
@@ -153,8 +157,12 @@ async def get_route_directions(start_lat: float, start_lon: float, end_lat: floa
                 }]
             }
             geojson_str = json.dumps(geojson, ensure_ascii=False)
-            ref_id = store_tool_result_for_current_session("get_route_directions", geojson_str, {"type": "geojson"})
-            return f"【导航成功】方式: {profile}\n导航距离: {distance_km:.2f} 公里\n预计耗时: {duration_min:.1f} 分钟。\n路线的 GeoJSON 轨迹数据已生成并存储，请使用宏语法 {{{{ref:{ref_id}}}}} 作为 geojson 参数的值传递给 map_card 的 geojson 参数以显示轨迹地图！"
+            agent_msg = f"【导航成功】方式: {profile}\n导航距离: {distance_km:.2f} 公里\n预计耗时: {duration_min:.1f} 分钟。\n路线的 GeoJSON 轨迹数据已生成并存储，请使用宏语法 {{{{ref:{{{{REF_ID}}}}}}}} 作为 geojson 参数的值传递给 map_card 的 geojson 参数以显示轨迹地图！"
+            return StructuredToolResult(
+                agent_message=agent_msg,
+                raw_output=geojson_str,
+                metadata={"type": "geojson"}
+            )
     except Exception as e:
         logger.error(f"get_route_directions error: {e}")
         return f"执行失败: {e}"
