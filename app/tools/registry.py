@@ -24,7 +24,7 @@ TOOL_CATEGORIES = {
     "visualization": [render_map_card],
 }
 
-GENERAL_AGENT_TOOL_CATEGORIES = ("search", "sandbox", "results", "execution", "skills")
+GENERAL_AGENT_TOOL_CATEGORIES = ("search", "sandbox", "results", "execution", "skills", "geo", "visualization")
 NETWORK_SPECIALIST_TOOL_CATEGORIES = (*GENERAL_AGENT_TOOL_CATEGORIES, "geo", "visualization")
 
 
