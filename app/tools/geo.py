@@ -14,8 +14,8 @@ from app.tools.storage import store_tool_result_for_current_session
 
 @tool
 async def get_administrative_regions(country_code: str, level: str = "1") -> str:
-    """获取行政区划列表。
-    通过 geoBoundaries API 获取指定国家和指定层级的行政区列表。
+    """获取行政区划列表及全量边界数据。
+    通过 geoBoundaries API 获取指定国家和层级的行政区列表，同时会在后台保存包含所有这些行政区的全量 GeoJSON 边界数据，非常适合用于一次性在地图上渲染整个国家的省市边界！
     参数:
     - country_code (str): ISO 3166-1 alpha-3 国家代码 (例如 "CHN" 表示中国, "USA" 表示美国)。
     - level (str): 层级，可选值 "0" (国家级), "1" (省级/州级), "2" (市级)。默认为 "1"。
