@@ -470,14 +470,14 @@ function renderAssistantBlocks(blocks) {
 function parseMessageBlocksJS(content) {
   if (!content) return null;
   const blocks = [];
-  const regex = /(?:^[ \t]*(?:`{3,}|~{3,})[ \t]*(?:widget|json)?[ \t]*\r?\n|^[ \t]*(?:widget|json)[ \t]*\r?\n)?(\{\s*\"widget_type\"[\s\S]*?\n\})(?:\r?\n^[ \t]*(?:`{3,}|~{3,}))?/gm;
+  const regex = /^[ \t]*(`{3,}|~{3,})[ \t]*widget[ \t]*\r?\n([\s\S]*?)\n[ \t]*\1[ \t]*$/gm;
   let lastIndex = 0;
   let match;
   while ((match = regex.exec(content)) !== null) {
     const textBefore = content.substring(lastIndex, match.index);
     if (textBefore.trim()) blocks.push({ type: "text", content: textBefore.trim() });
     try {
-      const payload = JSON.parse(match[1].trim());
+      const payload = JSON.parse(match[2].trim());
       if (payload && payload.widget_type) {
         blocks.push({ type: "widget", widget_type: payload.widget_type, id: payload.id || "", props: payload.props || {} });
       } else {
