@@ -470,7 +470,7 @@ function renderAssistantBlocks(blocks) {
 function parseMessageBlocksJS(content) {
   if (!content) return null;
   const blocks = [];
-  const regex = /^[ \t]*(`{3,}|~{3,})[ \t]*widget[ \t]*\r?\n([\s\S]*?)\n[ \t]*\1[ \t]*$/gm;
+  const regex = /(`{3,}|~{3,})[ \t]*widget[ \t]*\r?\n([\s\S]*?)\n[ \t]*\1/g;
   let lastIndex = 0;
   let match;
   while ((match = regex.exec(content)) !== null) {
