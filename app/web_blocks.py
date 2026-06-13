@@ -22,10 +22,10 @@ from typing import Any
 
 # Matches a fenced code block tagged ``widget`` (3+ backticks or tildes).
 _WIDGET_FENCE_RE = re.compile(
-    r"^[ \t]*(?P<fence>`{3,}|~{3,})[ \t]*(?:widget|json)?[ \t]*\r?\n"
-    r"(?P<body>.*?)\r?\n?"
-    r"^[ \t]*(?P=fence)[ \t]*$",
-    re.DOTALL | re.MULTILINE,
+    r"(?:^[ \t]*(?:`{3,}|~{3,})[ \t]*(?:widget|json)?[ \t]*\r?\n|^[ \t]*(?:widget|json)[ \t]*\r?\n)?"
+    r"(?P<body>\{\s*\"widget_type\"[\s\S]*?\n\})"
+    r"(?:\r?\n^[ \t]*(?:`{3,}|~{3,}))?",
+    re.MULTILINE
 )
 
 
