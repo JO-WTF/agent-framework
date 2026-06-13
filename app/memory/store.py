@@ -36,6 +36,7 @@ KNOWN_CONTEXT_TAGS = (
     "memory",
     "security",
     "web",
+    "network",
 )
 
 
@@ -314,7 +315,16 @@ def store_tool_result(tool_name: str, raw_output: str, session_id: str | None = 
 
     tool_results_file = get_session_file_path(session_id, "tool_results.json")
     records = _read_json(tool_results_file, [])
-    ref_id = f"tool-{len(records) + 1:04d}"
+    max_id = 0
+    for r in records:
+        rid = r.get("id", "")
+        if rid.startswith("tool-"):
+            try:
+                max_id = max(max_id, int(rid[5:]))
+            except ValueError:
+                pass
+    ref_id = f"tool-{max_id + 1:04d}"
+
     payload = {
         "id": ref_id,
         "created_at": datetime.now().isoformat(),
@@ -324,7 +334,7 @@ def store_tool_result(tool_name: str, raw_output: str, session_id: str | None = 
         "content": raw_output,
     }
     records.insert(0, payload)
-    _write_json(tool_results_file, records[:MAX_TOOL_RESULTS])
+    _write_json(tool_results_file, records)
     return ref_id
 
 

@@ -3,6 +3,7 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables.config import RunnableConfig
 
+from app.agents.contracts import format_agent_contracts_for_orchestrator
 from app.config import AgentState, llm_client
 from app.logging_config import logger
 from app.llm_logging import log_llm_request, log_llm_response
@@ -31,6 +32,7 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
     user_prompt = (
         f"当前任务复杂度: {state.get('task_complexity', 'unknown')}\n\n"
         f"可选上下文标签: {format_available_context_tags()}\n\n"
+        f"Agent 能力边界与计划约束:\n{format_agent_contracts_for_orchestrator()}\n\n"
         f"当前 todo_list JSON:\n{current_todo_json}\n\n"
         f"最近消息:\n{recent_messages}"
     )
@@ -131,5 +133,3 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
             {"role": "user", "content": user_prompt},
         ],
     }
-
-

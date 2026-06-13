@@ -1,21 +1,22 @@
 from collections.abc import Iterable
 
+from app.tools.api_request import api_request
 from app.tools.command_runner import run_command
 from app.tools.context import get_session_id, set_session_id
-from app.tools.curl import curl
 from app.tools.geocoding import geocode_address, reverse_geocode
 from app.tools.map_card import render_map_card
 from app.tools.python_runner import run_python
 from app.tools.sandbox_tools import add_shared_mount_tool, apply_sandbox_file, sandbox_status, start_sandbox, stop_sandbox
 from app.tools.search import search_web
 from app.tools.skills import save_skill_sop, list_skills, delete_skill_sop, get_skill_sop
-from app.tools.tool_results import list_tool_results, read_tool_result
+from app.tools.tool_results import list_tool_results, read_tool_result, store_data
+from app.tools.webpage_reader import read_webpage
 
 
 TOOL_CATEGORIES = {
-    "search": [search_web, curl],
+    "search": [search_web, read_webpage, api_request],
     "sandbox": [start_sandbox, sandbox_status, stop_sandbox, add_shared_mount_tool, apply_sandbox_file],
-    "results": [list_tool_results, read_tool_result],
+    "results": [list_tool_results, read_tool_result, store_data],
     "execution": [run_python, run_command],
     "skills": [save_skill_sop, list_skills, delete_skill_sop, get_skill_sop],
     "geo": [geocode_address, reverse_geocode],

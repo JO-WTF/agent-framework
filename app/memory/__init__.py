@@ -16,6 +16,15 @@ from app.memory.store import (
     summarize_text,
     trim_messages,
 )
+from app.memory.proposals import (
+    AGENT_CONTRACTS,
+    build_task_ledger,
+    derive_memory_proposals_from_state,
+    format_compact_memory_context,
+    normalize_memory_proposal,
+    route_memory_proposals,
+    select_relevant_memory_view,
+)
 
 __all__ = [
     "append_session_event",
@@ -34,4 +43,11 @@ __all__ = [
     "store_tool_result",
     "summarize_text",
     "trim_messages",
+    "AGENT_CONTRACTS",
+    "build_task_ledger",
+    "derive_memory_proposals_from_state",
+    "format_compact_memory_context",
+    "normalize_memory_proposal",
+    "route_memory_proposals",
+    "select_relevant_memory_view",
 ]

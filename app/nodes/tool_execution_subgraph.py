@@ -13,6 +13,7 @@ from app.llm_logging import log_llm_request, log_llm_response
 from app.logging_config import logger
 from app.tools.context import set_session_id
 from app.tools.registry import AGENT_TOOLS
+from app.tools.reference_resolver import resolve_tool_args
 
 
 class ToolExecutionState(TypedDict):
@@ -300,7 +301,8 @@ async def execute_node(state: ToolExecutionState, config: RunnableConfig) -> dic
         }
 
     try:
-        result = await tool.ainvoke(args, config=config)
+        resolved_args = resolve_tool_args(args)
+        result = await tool.ainvoke(resolved_args, config=config)
         result_text = str(result)
         status, failure_reason = classify_tool_result(tool_name, result_text)
         required_action = (

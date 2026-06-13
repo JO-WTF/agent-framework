@@ -14,6 +14,7 @@ from app.memory.store import (
     load_dynamic_skills,
     normalize_context_tags,
 )
+from app.memory.proposals import format_compact_memory_context
 
 
 def get_system_prompt(prompt_key: str, context_tags: list[str] | str | None = None) -> str:
@@ -76,22 +77,38 @@ def format_todo_items(items: list[dict], indent: int = 0) -> list[str]:
     return lines
 
 
-def format_world_state_context(state: dict, max_chars: int = 2000) -> str:
+def format_world_state_context(state: dict, max_chars: int = 1600) -> str:
     world_state = state.get("world_state") or {}
     if not world_state:
         return "World State：暂无已固化事实。"
-    compact = json.dumps(world_state, ensure_ascii=False, default=str, indent=2)
+    compact = json.dumps(
+        {
+            "task_ledger": world_state.get("task_ledger"),
+            "memory": {
+                "policy": (world_state.get("memory") or {}).get("policy"),
+                "stats": (world_state.get("memory") or {}).get("stats"),
+                "conflicts": ((world_state.get("memory") or {}).get("conflicts") or [])[:3],
+            },
+            "recent_tool_results": (world_state.get("tool_results") or [])[-5:],
+            "sandbox": world_state.get("sandbox"),
+            "pending_approvals": (world_state.get("pending_approvals") or [])[:5],
+            "last_final_reply": world_state.get("last_final_reply"),
+        },
+        ensure_ascii=False,
+        default=str,
+        indent=2,
+    )
     if len(compact) > max_chars:
         compact = compact[:max_chars] + "\n...（World State 已截断）"
     return "World State：\n" + compact
 
 
-def format_todo_context(state: dict) -> str:
+def format_todo_context(state: dict, *, include_world_state: bool = False) -> str:
     todo_list = state.get("todo_list") or []
     complexity = state.get("task_complexity", "simple")
     context_tags = normalize_context_tags(state.get("context_tags"))
     tags_line = f"上下文标签：{', '.join(context_tags)}"
-    world_state_context = format_world_state_context(state)
+    world_state_context = format_world_state_context(state) if include_world_state else format_compact_memory_context(state)
     if not todo_list:
         return f"任务复杂度：{complexity}\n{tags_line}\n{world_state_context}\n当前没有 todo list。"
 

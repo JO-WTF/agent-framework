@@ -543,7 +543,9 @@ def post_process_serialized_messages(messages: list[dict[str, Any]], session: "C
                                 {
                                     "lat": pt["latitude"],
                                     "lng": pt["longitude"],
-                                    "label": pt["label"]
+                                    "label": pt.get("label"),
+                                    "color": pt.get("color"),
+                                    "description": pt.get("description"),
                                 } for pt in stored_card.get("points") or []
                             ]
                         }
@@ -600,6 +602,8 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
     try:
         async for update in session.agent_app.astream(initial_input, config, stream_mode="updates"):
             for node_name, node_update in update.items():
+                if node_update is None:
+                    node_update = {}
                 session.state["current_node"] = node_name
                 events = session.state["events"]
                 last_event = events[-1] if events else None

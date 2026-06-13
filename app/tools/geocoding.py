@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from typing import Any
@@ -207,7 +208,7 @@ async def _here_reverse(latitude: float, longitude: float, limit: int, language:
 
 @tool(description=PROMPTS["tools"]["geocode_address"])
 async def geocode_address(
-    address: str,
+    address: str | list[str],
     provider: str = "auto",
     limit: int = 5,
     country: str | None = None,
@@ -215,71 +216,167 @@ async def geocode_address(
     config: RunnableConfig = None,
 ) -> str:
     get_session_id_from_config_or_context(config)
-    logger.info(f"🗺️ \033[94m[触发工具: 地址编码] -> {address}\033[0m")
-
-    cleaned_address = (address or "").strip()
-    if not cleaned_address:
-        return _error("geocode_address", "address 不能为空。", _metadata(None, "invalid_args"))
 
     selected_provider, provider_error = _select_provider(provider)
     if provider_error:
         return _error("geocode_address", provider_error, _metadata(selected_provider, "missing_config", requested_provider=provider))
 
     result_limit = _clamp_limit(limit)
-    try:
-        if selected_provider == "mapbox":
-            payload = await _mapbox_geocode(cleaned_address, result_limit, country, language)
-        else:
-            payload = await _here_geocode(cleaned_address, result_limit, country, language)
-    except Exception as exc:
-        return _error(
-            "geocode_address",
-            str(exc),
-            _metadata(selected_provider, "error", address=cleaned_address, requested_provider=provider),
-        )
+    is_batch = isinstance(address, list)
+    if is_batch and limit == 5:
+        # Default to 1 result per query for batch processing to prevent massive token usage and archiving loops
+        result_limit = 1
 
-    return _format_or_archive(
-        "geocode_address",
-        payload,
-        _metadata(selected_provider, "success", address=cleaned_address, result_count=len(payload.get("results", []))),
-    )
+    async def _geocode_single(addr: str) -> dict[str, Any]:
+        cleaned = (addr or "").strip()
+        if not cleaned:
+            return {"query": addr, "error": "address 不能为空"}
+        try:
+            if selected_provider == "mapbox":
+                return await _mapbox_geocode(cleaned, result_limit, country, language)
+            else:
+                return await _here_geocode(cleaned, result_limit, country, language)
+        except Exception as exc:
+            return {"query": cleaned, "error": str(exc)}
+
+    if is_batch:
+        logger.info(f"🗺️ \033[94m[触发工具: 地址编码] -> 批量数量: {len(address)}\033[0m")
+        if not address:
+            return _error("geocode_address", "address 列表不能为空。", _metadata(None, "invalid_args"))
+        
+        tasks = [_geocode_single(addr) for addr in address[:20]]
+        results = await asyncio.gather(*tasks)
+        
+        compact_results = []
+        for res in results:
+            item = {"query": res.get("query")}
+            if "error" in res:
+                item["error"] = res["error"]
+            elif res.get("results"):
+                best = res["results"][0]
+                item["latitude"] = best.get("latitude")
+                item["longitude"] = best.get("longitude")
+                item["address"] = best.get("address")
+                item["name"] = best.get("name")
+            else:
+                item["error"] = "未找到结果"
+            compact_results.append(item)
+            
+        payload = {"provider": selected_provider, "batch_results": compact_results}
+        return _format_or_archive(
+            "geocode_address",
+            payload,
+            _metadata(selected_provider, "success", count=len(results)),
+        )
+    else:
+        logger.info(f"🗺️ \033[94m[触发工具: 地址编码] -> {address}\033[0m")
+        cleaned_address = (address or "").strip()
+        if not cleaned_address:
+            return _error("geocode_address", "address 不能为空。", _metadata(None, "invalid_args"))
+
+        try:
+            if selected_provider == "mapbox":
+                payload = await _mapbox_geocode(cleaned_address, result_limit, country, language)
+            else:
+                payload = await _here_geocode(cleaned_address, result_limit, country, language)
+        except Exception as exc:
+            return _error(
+                "geocode_address",
+                str(exc),
+                _metadata(selected_provider, "error", address=cleaned_address, requested_provider=provider),
+            )
+
+        return _format_or_archive(
+            "geocode_address",
+            payload,
+            _metadata(selected_provider, "success", address=cleaned_address, result_count=len(payload.get("results", []))),
+        )
 
 
 @tool(description=PROMPTS["tools"]["reverse_geocode"])
 async def reverse_geocode(
-    latitude: float,
-    longitude: float,
+    latitude: float | list[float],
+    longitude: float | list[float],
     provider: str = "auto",
     limit: int = 5,
     language: str | None = None,
     config: RunnableConfig = None,
 ) -> str:
     get_session_id_from_config_or_context(config)
-    logger.info(f"🗺️ \033[94m[触发工具: 经纬度反编码] -> {latitude},{longitude}\033[0m")
-
-    lat, lng, coordinate_error = _validate_coordinates(latitude, longitude)
-    if coordinate_error:
-        return _error("reverse_geocode", coordinate_error, _metadata(None, "invalid_args"))
 
     selected_provider, provider_error = _select_provider(provider)
     if provider_error:
         return _error("reverse_geocode", provider_error, _metadata(selected_provider, "missing_config", requested_provider=provider))
 
     result_limit = _clamp_limit(limit)
-    try:
-        if selected_provider == "mapbox":
-            payload = await _mapbox_reverse(lat, lng, result_limit, language)
-        else:
-            payload = await _here_reverse(lat, lng, result_limit, language)
-    except Exception as exc:
-        return _error(
-            "reverse_geocode",
-            str(exc),
-            _metadata(selected_provider, "error", latitude=lat, longitude=lng, requested_provider=provider),
-        )
+    is_batch = isinstance(latitude, list) and isinstance(longitude, list)
+    if is_batch and limit == 5:
+        # Default to 1 result per query for batch processing to prevent massive token usage and archiving loops
+        result_limit = 1
 
-    return _format_or_archive(
-        "reverse_geocode",
-        payload,
-        _metadata(selected_provider, "success", latitude=lat, longitude=lng, result_count=len(payload.get("results", []))),
-    )
+    async def _reverse_single(lat_val: float, lng_val: float) -> dict[str, Any]:
+        lat, lng, coordinate_error = _validate_coordinates(lat_val, lng_val)
+        if coordinate_error:
+            return {"query": {"latitude": lat_val, "longitude": lng_val}, "error": coordinate_error}
+        try:
+            if selected_provider == "mapbox":
+                return await _mapbox_reverse(lat, lng, result_limit, language)
+            else:
+                return await _here_reverse(lat, lng, result_limit, language)
+        except Exception as exc:
+            return {"query": {"latitude": lat, "longitude": lng}, "error": str(exc)}
+
+    if is_batch:
+        if len(latitude) != len(longitude):
+            return _error("reverse_geocode", "latitude 和 longitude 列表长度必须一致。", _metadata(None, "invalid_args"))
+        if not latitude:
+            return _error("reverse_geocode", "经纬度列表不能为空。", _metadata(None, "invalid_args"))
+        
+        logger.info(f"🗺️ \033[94m[触发工具: 经纬度反编码] -> 批量数量: {len(latitude)}\033[0m")
+        tasks = [_reverse_single(lat_val, lng_val) for lat_val, lng_val in zip(latitude[:20], longitude[:20])]
+        results = await asyncio.gather(*tasks)
+        
+        compact_results = []
+        for res in results:
+            item = {"query": res.get("query")}
+            if "error" in res:
+                item["error"] = res["error"]
+            elif res.get("results"):
+                best = res["results"][0]
+                item["address"] = best.get("address")
+                item["name"] = best.get("name")
+            else:
+                item["error"] = "未找到结果"
+            compact_results.append(item)
+
+        payload = {"provider": selected_provider, "batch_results": compact_results}
+        return _format_or_archive(
+            "reverse_geocode",
+            payload,
+            _metadata(selected_provider, "success", count=len(results)),
+        )
+    elif not isinstance(latitude, list) and not isinstance(longitude, list):
+        logger.info(f"🗺️ \033[94m[触发工具: 经纬度反编码] -> {latitude},{longitude}\033[0m")
+        lat, lng, coordinate_error = _validate_coordinates(latitude, longitude)
+        if coordinate_error:
+            return _error("reverse_geocode", coordinate_error, _metadata(None, "invalid_args"))
+
+        try:
+            if selected_provider == "mapbox":
+                payload = await _mapbox_reverse(lat, lng, result_limit, language)
+            else:
+                payload = await _here_reverse(lat, lng, result_limit, language)
+        except Exception as exc:
+            return _error(
+                "reverse_geocode",
+                str(exc),
+                _metadata(selected_provider, "error", latitude=lat, longitude=lng, requested_provider=provider),
+            )
+
+        return _format_or_archive(
+            "reverse_geocode",
+            payload,
+            _metadata(selected_provider, "success", latitude=lat, longitude=lng, result_count=len(payload.get("results", []))),
+        )
+    else:
+        return _error("reverse_geocode", "latitude 和 longitude 必须同为单值或同为列表。", _metadata(None, "invalid_args"))
