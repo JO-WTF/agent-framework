@@ -4,6 +4,7 @@ import os
 import platform
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,9 @@ from app.runtime_paths import ROOT_DIR, get_session_dir
 from app.tools.context import ensure_session_id
 
 SHARED_MOUNTS_FILE = "shared_mounts.json"
+SANDBOX_STATUS_CACHE_TTL_SECONDS = float(os.getenv("AGENT_SANDBOX_STATUS_CACHE_TTL", "2"))
+DOCKER_INSPECT_TIMEOUT_SECONDS = float(os.getenv("AGENT_DOCKER_INSPECT_TIMEOUT", "2"))
+_SANDBOX_WORLD_STATE_CACHE: dict[str, tuple[float, tuple[int, int], dict[str, Any]]] = {}
 
 
 @dataclass(frozen=True)
@@ -56,6 +60,17 @@ def get_sandbox_world_state(session_id: str | None) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return {"mode": "docker", "status": "metadata_unreadable"}
 
+    try:
+        stat = metadata_path.stat()
+        metadata_version = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        metadata_version = (0, 0)
+
+    now = time.monotonic()
+    cached = _SANDBOX_WORLD_STATE_CACHE.get(session_id)
+    if cached and cached[0] > now and cached[1] == metadata_version:
+        return dict(cached[2])
+
     container = str(metadata.get("container", ""))
     runtime_status = str(metadata.get("status", "unknown"))
     if container and runtime_status != "stopped":
@@ -68,7 +83,7 @@ def get_sandbox_world_state(session_id: str | None) -> dict[str, Any] | None:
         except SandboxError as e:
             runtime_status = f"unavailable: {str(e)}"
 
-    return {
+    world_state = {
         "mode": "docker",
         "status": runtime_status,
         "runtime": str(metadata.get("runtime", "docker")),
@@ -77,6 +92,13 @@ def get_sandbox_world_state(session_id: str | None) -> dict[str, Any] | None:
         "work_dir": str(metadata.get("work_dir", "")),
         "shared_mounts": metadata.get("shared_mounts", []),
     }
+    if SANDBOX_STATUS_CACHE_TTL_SECONDS > 0:
+        _SANDBOX_WORLD_STATE_CACHE[session_id] = (
+            now + SANDBOX_STATUS_CACHE_TTL_SECONDS,
+            metadata_version,
+            dict(world_state),
+        )
+    return world_state
 
 
 def inspect_container_running(container_name: str) -> bool | None:
@@ -85,7 +107,7 @@ def inspect_container_running(container_name: str) -> bool | None:
             ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=DOCKER_INSPECT_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as e:
         raise SandboxError("Docker CLI command not found. Please make sure Docker is installed and in your PATH.") from e

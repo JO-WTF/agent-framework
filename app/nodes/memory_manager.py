@@ -159,6 +159,8 @@ def route_after_memory(state: AgentState) -> str:
     if origin == "agent":
         if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
             return "tools"
+        if isinstance(last_message, AIMessage) and str(getattr(last_message, "content", "")).strip():
+            return "orchestrator"
         return "orchestrator"
 
     if origin == "tools":

@@ -19,6 +19,13 @@ from app.logging_config import logger
 from app.llm_logging import log_user_question
 
 # ----------------- 路由裁判逻辑 -----------------
+def route_after_orchestrator(state: AgentState) -> str:
+    """Let final replies go straight to evaluation without another memory pass."""
+    if state.get("orchestrator_next") == "evaluate":
+        return "evaluate"
+    return "memory"
+
+
 def route_after_evaluation(state: AgentState) -> str:
     """质检完去哪儿？通过就结束，不通过就回大脑"""
     if state["eval_status"] == "PASS":
@@ -35,7 +42,7 @@ def build_agent_graph():
     workflow.add_node("evaluate", evaluate_response_node)
 
     workflow.add_edge(START, "orchestrator")
-    workflow.add_edge("orchestrator", "memory")
+    workflow.add_conditional_edges("orchestrator", route_after_orchestrator, {"memory": "memory", "evaluate": "evaluate"})
     workflow.add_edge("agent", "memory")
     workflow.add_edge("tools", "memory")
     workflow.add_conditional_edges(

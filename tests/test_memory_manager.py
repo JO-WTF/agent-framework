@@ -8,7 +8,9 @@ os.environ.setdefault("TAVILY_API_KEY", "dummy")
 
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 
+from app.cli import route_after_orchestrator
 from app.nodes.memory_manager import build_world_state, memory_manager_node, route_after_memory
+from app.nodes.orchestrator import orchestrator_node
 from app.runtime_paths import get_session_dir
 
 
@@ -150,10 +152,45 @@ class MemoryManagerTests(unittest.IsolatedAsyncioTestCase):
             "messages": [AIMessage(content="", tool_calls=[{"id": "call-1", "name": "run_command", "args": {}}], id="m1")],
             "last_node": "agent",
         }
+        agent_final_reply_state = {
+            "messages": [AIMessage(content="任务已完成", id="m1")],
+            "last_node": "agent",
+        }
 
         self.assertEqual(route_after_memory(tool_message_state), "agent")
         self.assertEqual(route_after_memory(tool_output_state), "orchestrator")
         self.assertEqual(route_after_memory(agent_tool_call_state), "tools")
+        self.assertEqual(route_after_memory(agent_final_reply_state), "orchestrator")
+
+    async def test_orchestrator_fast_path_routes_final_reply_to_evaluator_without_llm(self):
+        state = {
+            "messages": [AIMessage(content="任务已完成", id="m1")],
+            "revision_count": 0,
+            "eval_status": "",
+            "session_id": "unit-test",
+            "task_complexity": "simple",
+            "context_tags": ["general"],
+            "todo_list": [{"id": "1", "title": "回答用户", "status": "completed", "children": []}],
+            "world_state": {},
+            "last_node": "agent",
+            "orchestrator_next": "agent",
+        }
+
+        with patch("app.nodes.orchestrator.llm_client.ainvoke") as ainvoke:
+            result = await orchestrator_node(state, {})
+
+        ainvoke.assert_not_called()
+        self.assertEqual(result["last_node"], "orchestrator")
+        self.assertEqual(result["orchestrator_next"], "evaluate")
+        self.assertEqual(route_after_orchestrator({**state, **result}), "evaluate")
+
+    def test_route_after_orchestrator_sends_non_evaluation_updates_to_memory(self):
+        state = {
+            "messages": [HumanMessage(content="请继续", id="m1")],
+            "orchestrator_next": "agent",
+        }
+
+        self.assertEqual(route_after_orchestrator(state), "memory")
 
 
 if __name__ == "__main__":

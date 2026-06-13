@@ -72,7 +72,7 @@ const sessionId = getSessionId();
 
 const expandedEvents = new Set();
 const ROUTE_GROUPS = [
-  ["START", "orchestrator", "memory", "agent", "memory", "orchestrator", "memory", "evaluate", "END"],
+  ["START", "orchestrator", "memory", "agent", "memory", "orchestrator", "evaluate", "END"],
   ["agent", "memory", "tools", "memory", "orchestrator"],
   ["evaluate", "orchestrator"],
 ];
@@ -1354,6 +1354,7 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels, llmActiveNode)
     ["memory->tools", "M", "T", "dotted"],
     ["tools->memory", "T", "M", "dotted"],
     ["memory->orchestrator", "M", "O", "solid"],
+    ["orchestrator->evaluate", "O", "E", "solid"],
     ["memory->evaluate", "M", "E", "solid"],
     ["evaluate->END", "E", "X", "solid"],
     ["evaluate->orchestrator", "E", "O", "dotted"],

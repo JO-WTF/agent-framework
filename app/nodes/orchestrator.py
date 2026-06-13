@@ -1,6 +1,6 @@
 import json
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables.config import RunnableConfig
 
 from app.config import AgentState, llm_client
@@ -19,8 +19,34 @@ from app.nodes.common import (
 )
 
 
+def _is_final_agent_reply(state: AgentState) -> bool:
+    messages = state.get("messages", [])
+    if state.get("last_node") != "agent" or not messages:
+        return False
+    last_message = messages[-1]
+    return (
+        isinstance(last_message, AIMessage)
+        and not getattr(last_message, "tool_calls", None)
+        and bool(str(getattr(last_message, "content", "")).strip())
+    )
+
+
 async def orchestrator_node(state: AgentState, config: RunnableConfig):
     logger.info("🧭 \033[94m[Node: Orchestrator]\033[0m 正在判断任务复杂度并更新 todo list...")
+    if _is_final_agent_reply(state):
+        context_tags = normalize_context_tags(state.get("context_tags"))[:4]
+        return {
+            "task_complexity": state.get("task_complexity", "simple"),
+            "todo_list": state.get("todo_list", []),
+            "orchestrator_next": "evaluate",
+            "context_tags": context_tags,
+            "active_skills": get_active_skill_names(context_tags),
+            "last_node": "orchestrator",
+            "orchestrator_think": "",
+            "orchestrator_message": "Fast-path: final agent reply is ready for evaluation.",
+            "orchestrator_prompt": [],
+        }
+
     initial_context_tags = infer_context_tags_from_state(state)[:4]
     system_prompt = get_system_prompt("orchestrator", context_tags=initial_context_tags)
     current_todo_json = json.dumps(state.get("todo_list", []), ensure_ascii=False, indent=2)
@@ -110,5 +136,4 @@ async def orchestrator_node(state: AgentState, config: RunnableConfig):
             {"role": "user", "content": user_prompt},
         ],
     }
-
 
