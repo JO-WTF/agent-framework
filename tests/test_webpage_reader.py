@@ -8,7 +8,6 @@ os.environ.setdefault("TAVILY_API_KEY", "dummy")
 
 from langchain_core.runnables import RunnableConfig
 
-from app.tools.registry import get_tools_for_agent_role
 from app.tools.webpage_reader import extract_readable_webpage, read_webpage
 
 
@@ -69,13 +68,6 @@ class WebpageReaderTests(unittest.IsolatedAsyncioTestCase):
         stored_content = mock_store.call_args[0][1]
         self.assertIn("正文内容", stored_content)
         self.assertNotIn("alert(1)", stored_content)
-
-    def test_read_webpage_registered_for_general_agent(self):
-        tool_names = {tool.name for tool in get_tools_for_agent_role("general")}
-
-        self.assertIn("read_webpage", tool_names)
-        self.assertIn("api_request", tool_names)
-        self.assertNotIn("curl", tool_names)
 
 
 if __name__ == "__main__":

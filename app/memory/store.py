@@ -410,8 +410,26 @@ def get_max_context_size_bytes() -> int:
     return get_max_context_size_kb() * 1024
 
 
+# Caches message byte sizes to drastically improve MemoryManager performance.
+# Key: (id(message), len(message.content))
+_MESSAGE_SIZE_CACHE: dict[tuple[int, int], int] = {}
+
+
 def _message_size_bytes(message: Any) -> int:
-    return len(json.dumps(_serialize_message(message), ensure_ascii=False, default=str).encode("utf-8"))
+    content = str(getattr(message, "content", ""))
+    cache_key = (id(message), len(content))
+    
+    if cache_key in _MESSAGE_SIZE_CACHE:
+        return _MESSAGE_SIZE_CACHE[cache_key]
+        
+    size = len(json.dumps(_serialize_message(message), ensure_ascii=False, default=str).encode("utf-8"))
+    
+    # Simple eviction strategy to prevent bounded memory growth
+    if len(_MESSAGE_SIZE_CACHE) > 5000:
+        _MESSAGE_SIZE_CACHE.clear()
+        
+    _MESSAGE_SIZE_CACHE[cache_key] = size
+    return size
 
 
 def context_size_bytes(messages: list[Any]) -> int:

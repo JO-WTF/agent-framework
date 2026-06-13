@@ -174,7 +174,7 @@ async def memory_manager_node(state: AgentState) -> dict[str, Any]:
 
 
 def _route_to_selected_agent(state: AgentState) -> str:
-    return "network_specialist_agent" if state.get("agent_role") == "network" else "agent"
+    return "agent"
 
 
 def route_after_memory(state: AgentState) -> str:
@@ -182,7 +182,7 @@ def route_after_memory(state: AgentState) -> str:
     last_message = state["messages"][-1]
     origin = state.get("last_node", "")
 
-    if origin in {"agent", "network_specialist_agent"}:
+    if origin == "agent":
         if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
             return "tools"
         if isinstance(last_message, AIMessage) and str(getattr(last_message, "content", "")).strip():

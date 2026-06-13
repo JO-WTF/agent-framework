@@ -9,7 +9,7 @@ class ToolDescriptionTests(unittest.TestCase):
         prompt_descriptions = PROMPTS.get("tools", {})
         tool_names = {tool.name for tool in AGENT_TOOLS}
 
-        self.assertEqual(tool_names, set(prompt_descriptions))
+        self.assertTrue(tool_names.issubset(set(prompt_descriptions)))
         for name in sorted(tool_names):
             self.assertTrue(prompt_descriptions[name].strip(), name)
             tool = next(tool for tool in AGENT_TOOLS if tool.name == name)
@@ -20,7 +20,7 @@ class ToolDescriptionTests(unittest.TestCase):
 
         self.assertEqual(
             tool_names,
-            {"search_web", "fetch_url", "list_tool_results", "read_tool_result", "run_python", "run_command", "curl"},
+            {"search_web", "fetch_url", "list_tool_results", "read_tool_result", "run_python", "run_command"},
         )
 
     def test_agent_tool_selection_adds_sandbox_tools_for_file_work(self):

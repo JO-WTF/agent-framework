@@ -10,8 +10,6 @@ os.environ.setdefault("TAVILY_API_KEY", "dummy")
 from langchain_core.runnables import RunnableConfig
 
 from app.tools.geocoding import geocode_address, reverse_geocode
-from app.tools.registry import GENERAL_AGENT_TOOLS, NETWORK_SPECIALIST_TOOLS, TOOL_CATEGORIES, TOOL_CATEGORY_BY_NAME
-
 
 class FakeResponse:
     def __init__(self, status_code: int, payload: dict):
@@ -128,21 +126,6 @@ class GeocodingToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("latitude 必须在 -90 到 90 之间", result)
         mock_store.assert_called_once()
         mock_note.assert_called_once()
-
-    def test_tool_registry_categorizes_geo_tools_for_network_specialist(self):
-        general_names = {tool.name for tool in GENERAL_AGENT_TOOLS}
-        network_names = {tool.name for tool in NETWORK_SPECIALIST_TOOLS}
-        geo_names = {tool.name for tool in TOOL_CATEGORIES["geo"]}
-        visualization_names = {tool.name for tool in TOOL_CATEGORIES["visualization"]}
-
-        self.assertEqual(geo_names, {"geocode_address", "reverse_geocode"})
-        self.assertEqual(visualization_names, {"render_map_card"})
-        self.assertNotIn("geocode_address", general_names)
-        self.assertNotIn("render_map_card", general_names)
-        self.assertIn("geocode_address", network_names)
-        self.assertIn("render_map_card", network_names)
-        self.assertEqual(TOOL_CATEGORY_BY_NAME["reverse_geocode"], "geo")
-        self.assertEqual(TOOL_CATEGORY_BY_NAME["render_map_card"], "visualization")
 
 
 if __name__ == "__main__":

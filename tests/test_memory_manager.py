@@ -158,7 +158,7 @@ class MemoryManagerTests(unittest.IsolatedAsyncioTestCase):
         }
 
         self.assertEqual(route_after_memory(tool_message_state), "agent")
-        self.assertEqual(route_after_memory(tool_output_state), "orchestrator")
+        self.assertEqual(route_after_memory(tool_output_state), "agent")
         self.assertEqual(route_after_memory(agent_tool_call_state), "tools")
         self.assertEqual(route_after_memory(agent_final_reply_state), "orchestrator")
 

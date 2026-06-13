@@ -6,8 +6,6 @@ from app.tools.search import search_web
 from app.tools.fetch import fetch_url
 from app.tools.tool_results import list_tool_results, read_tool_result
 from app.tools.skills import save_skill_sop, list_skills, delete_skill_sop, get_skill_sop
-from app.tools.curl import curl
-
 
 BASE_AGENT_TOOLS = [
     search_web,
@@ -16,7 +14,6 @@ BASE_AGENT_TOOLS = [
     read_tool_result,
     run_python,
     run_command,
-    curl,
 ]
 
 SANDBOX_CONTROL_TOOLS = [
