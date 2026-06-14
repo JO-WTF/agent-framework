@@ -336,6 +336,7 @@ class DockerSandboxRuntime:
         args.extend([
             "-v",
             f"{self.work_dir}:/workspace/work:rw",
+            "-v",
             f"{tool_results_path}:/workspace/tool_results.json:ro",
             *self._shared_mount_args(),
             "-w",

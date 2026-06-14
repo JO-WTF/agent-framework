@@ -405,12 +405,11 @@ function renderAssistantMarkdown(content, isIntermediate = false) {
   while ((match = blockRe.exec(content)) !== null) {
     const textBefore = content.substring(cursor, match.index).trim();
     if (textBefore) {
-      if (isIntermediate) processingHtml += `<div class="process-item text-item">${renderText(textBefore)}</div>`;
-      else formalHtml += renderText(textBefore);
+      processingHtml += `<div class="process-item text-item">${renderText(textBefore)}</div>`;
     }
     const thinkContent = match[1].trim();
     if (thinkContent) {
-      processingHtml += `<div class="chat-think-content">${escapeHtml(thinkContent)}</div>`;
+      processingHtml += `<div class="process-item think-item">${escapeHtml(thinkContent)}</div>`;
     }
     cursor = blockRe.lastIndex;
   }
@@ -421,12 +420,11 @@ function renderAssistantMarkdown(content, isIntermediate = false) {
   if (openMatch) {
     const textBefore = remainder.substring(0, openMatch.index).trim();
     if (textBefore) {
-      if (isIntermediate) processingHtml += `<div class="process-item text-item">${renderText(textBefore)}</div>`;
-      else formalHtml += renderText(textBefore);
+      processingHtml += `<div class="process-item text-item">${renderText(textBefore)}</div>`;
     }
     const thinkContent = openMatch[1].trim();
     if (thinkContent) {
-      processingHtml += `<div class="chat-think-content">${escapeHtml(thinkContent)}</div>`;
+      processingHtml += `<div class="process-item think-item">${escapeHtml(thinkContent)}</div>`;
     }
   } else if (remainder.trim()) {
     if (isIntermediate) processingHtml += `<div class="process-item text-item">${renderText(remainder.trim())}</div>`;
@@ -499,6 +497,16 @@ let lastMessagesSignature = null;
 
 
 
+
+function formatDuration(ms) {
+  if (!ms || ms < 0) return "0s";
+  let s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  let m = Math.floor(s / 60);
+  s = s % 60;
+  return `${m}m ${s}s`;
+}
+
 function renderMessages(messages, status, model_output) {
   window.roundTimers = window.roundTimers || new Map();
   
@@ -537,8 +545,6 @@ function renderMessages(messages, status, model_output) {
   const rounds = [];
   let currentRound = null;
   let processingText = "处理中";
-  const lastEvent = currentState.events && currentState.events.length > 0 ? currentState.events[currentState.events.length - 1] : null;
-  if (lastEvent && lastEvent.title) processingText = lastEvent.title;
 
   for (let i = 0; i < displayMessages.length; i++) {
     const msg = displayMessages[i];
@@ -602,12 +608,11 @@ function renderMessages(messages, status, model_output) {
     for (let j = 0; j < round.assistantMsgs.length; j++) {
       const msg = round.assistantMsgs[j];
       const isLastMsg = j === round.assistantMsgs.length - 1;
-      const isIntermediate = !isLastMsg || (msg.tool_calls && msg.tool_calls.length > 0);
+      const isIntermediate = !isLastMsg || (msg.tool_calls && msg.tool_calls.length > 0) || round.isStreaming;
 
       if (msg.role === "tool") {
         const contentStr = String(msg.content || "");
-        const truncated = contentStr.length > 500 ? contentStr.substring(0, 500) + "..." : contentStr;
-        processingHtml += `<div class="process-item tool-result-item">🔧 工具返回: ${escapeHtml(truncated)}</div>`;
+        processingHtml += `<details class="process-item tool-result-item"><summary style="cursor:pointer; font-weight:bold;">🔧 工具返回完成 (点击展开详情)</summary><div class="tool-details-content" style="margin-top: 8px; padding: 8px; background: var(--surface); border-radius: 4px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; font-size: 11px;">${escapeHtml(contentStr)}</div></details>`;
       } else if (msg.role === "assistant") {
         const text = String(msg.content || "");
         if (text || msg.blocks) {
@@ -618,7 +623,8 @@ function renderMessages(messages, status, model_output) {
         }
         if (msg.tool_calls && msg.tool_calls.length) {
           for (const call of msg.tool_calls) {
-            processingHtml += `<div class="process-item tool-call-item">🚀 调用工具: ${escapeHtml(call.name)}</div>`;
+            const argsStr = call.args ? (typeof call.args === 'string' ? call.args : JSON.stringify(call.args, null, 2)) : "";
+            processingHtml += `<details class="process-item tool-call-item"><summary style="cursor:pointer; font-weight:bold;">🚀 正在调用工具: ${escapeHtml(call.name)}</summary><div class="tool-details-content" style="margin-top: 8px; padding: 8px; background: var(--surface); border-radius: 4px; white-space: pre-wrap; font-size: 11px;">${escapeHtml(argsStr)}</div></details>`;
           }
         }
       } else if (msg.role === "system_status") {
@@ -646,7 +652,7 @@ function renderMessages(messages, status, model_output) {
             </summary>
             <div class="assistant-process-content chat-think-content">
               ${processingHtml}
-              ${round.isStreaming && !processingHtml.includes("spin-svg") ? `<div class="process-item system-status-item" style="color: var(--muted); font-size: 13px;">等待后续输出...</div>` : ''}
+              ${round.isStreaming && !processingHtml.includes("spin-svg") ? `<div class="process-item typing-indicator" style="background: transparent; padding: 4px 8px; display: flex; align-items: center; gap: 4px; color: var(--primary);"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>` : ''}
             </div>
           </details>
         `;
@@ -678,22 +684,41 @@ function renderMessages(messages, status, model_output) {
     
     const existingDetails = [];
     node.querySelectorAll("details.chat-think-details").forEach(d => {
-      existingDetails.push({ open: d.open, wasStreaming: d.dataset.streaming === "true" });
+      const content = d.querySelector(".assistant-process-content");
+      let scrollTop = 0;
+      let isAtBottom = true;
+      if (content) {
+        scrollTop = content.scrollTop;
+        isAtBottom = content.scrollHeight - content.scrollTop - content.clientHeight <= 10;
+      }
+      existingDetails.push({ open: d.open, wasStreaming: d.dataset.streaming === "true", scrollTop, isAtBottom });
     });
 
     node.dataset.sig = sig;
     node.innerHTML = inner;
 
     node.querySelectorAll("details.chat-think-details").forEach((d, index) => {
+      const isStreamingNow = d.dataset.streaming === "true";
       if (index < existingDetails.length) {
         const state = existingDetails[index];
-        const isStreamingNow = d.dataset.streaming === "true";
         if (state.wasStreaming && !isStreamingNow) {
           // just finished
         } else {
           if (state.open) d.setAttribute("open", "");
           else d.removeAttribute("open");
         }
+        
+        const content = d.querySelector(".assistant-process-content");
+        if (content) {
+          if (state.isAtBottom) {
+            content.scrollTop = content.scrollHeight;
+          } else {
+            content.scrollTop = state.scrollTop;
+          }
+        }
+      } else {
+        const content = d.querySelector(".assistant-process-content");
+        if (content) content.scrollTop = content.scrollHeight;
       }
     });
 

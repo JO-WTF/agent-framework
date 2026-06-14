@@ -646,6 +646,10 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                 session.state["current_node"] = node_name
                 events = session.state["events"]
                 last_event = events[-1] if events else None
+                serialized_messages = [serialize_message(m) for m in node_update.get("messages", [])]
+                if serialized_messages:
+                    processed = post_process_serialized_messages(serialized_messages, session)
+                    session.state["messages"].extend(processed)
 
                 if (last_event and last_event.get("type") == "node_update" 
                         and last_event.get("node") == node_name):
@@ -660,12 +664,13 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                     append_session_event(session.session_id, last_event)
                     await session.broadcast(last_event)
                 else:
-                    await session.publish({
+                    event_payload = {
                         "type": "node_update",
                         "title": f"节点更新: {node_name}",
                         "node": node_name,
                         "details": {"node": node_name, "update": make_json_safe(node_update)},
-                    })
+                    }
+                    await session.publish(event_payload)
 
 
                 if node_name == "orchestrator":
@@ -732,7 +737,12 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
             session.memory_messages.append(final_reply)
             session.memory_messages = trim_messages(session.memory_messages, session_id=session_id)
             session.complete_conversation_turn(serialize_message(final_reply))
-            session.state["messages"] = session.get_serialized_messages()
+            
+            if session.state.get("messages") and session.state["messages"][-1].get("role") == "assistant":
+                session.state["messages"][-1] = serialize_message(final_reply)
+            
+            # The full trace for the UI (including tool calls) has already been accumulated
+            # into session.state["messages"] incrementally during the run.
             await session.broadcast({"type": "messages_update", "title": "对话已更新", "details": {}})
 
         session.state["status"] = "idle"
@@ -798,6 +808,13 @@ async def chat(request: Request, payload: ChatRequest):
     user_message = HumanMessage(content=message)
     session.memory_messages.append(user_message)
     session.start_conversation_turn(serialize_message(user_message))
+    
+    current_messages = session.state.get("messages")
+    if not current_messages:
+        current_messages = session.get_serialized_messages()
+    else:
+        current_messages.append(serialize_message(user_message))
+
     session.state.update({
         "status": "running",
         "current_node": "orchestrator",
@@ -809,7 +826,7 @@ async def chat(request: Request, payload: ChatRequest):
         "tool_runs": [],
         "_tool_runs_by_run_id": {},
         "events": [],
-        "messages": session.get_serialized_messages(),
+        "messages": current_messages,
         "model_config": model_config,
         "llm_active_node": None,
     })
@@ -833,13 +850,20 @@ async def resume_after_approval(session_id: str, session: ConsoleSession, approv
     if not session.model_config_raw:
         session.model_config_raw = normalize_llm_settings(None)
         session.state["model_config"] = redact_llm_settings(session.model_config_raw)
+
+    current_messages = session.state.get("messages")
+    if not current_messages:
+        current_messages = session.get_serialized_messages()
+    else:
+        current_messages.append(serialize_message(message))
+
     session.state.update({
         "status": "running",
         "current_node": "orchestrator",
         "model_output": "",
         "tool_runs": [],
         "_tool_runs_by_run_id": {},
-        "messages": session.get_serialized_messages(),
+        "messages": current_messages,
         "llm_active_node": None,
     })
     await session.publish({
