@@ -1587,3 +1587,72 @@ body.progress-resizing {
 .workspace.runtime-collapsed #toggleRuntimeBtn {
   transform: rotate(180deg);
 }
+
+/* Codex style UI layout for Rounds */
+.chat-round {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.assistant-process-details {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.assistant-process-details summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  background: var(--background);
+  color: var(--muted);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  user-select: none;
+}
+
+.assistant-process-content {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--text);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.process-item {
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  padding: 4px 8px;
+  background: var(--background);
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+.tool-call-item {
+  color: var(--primary);
+}
+
+.tool-result-item {
+  color: var(--muted);
+}
+
+.system-status-item {
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+}
+
+.assistant-formal-reply {
+  padding: 16px;
+  background: var(--surface);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  line-height: 1.6;
+}

@@ -34,7 +34,9 @@ def _is_final_agent_reply(state: AgentState) -> bool:
 
 async def orchestrator_node(state: AgentState, config: RunnableConfig):
     logger.info("🧭 \033[94m[Node: Orchestrator]\033[0m 正在判断任务复杂度并更新 todo list...")
-    if _is_final_agent_reply(state):
+    todo_list = state.get("todo_list", [])
+    all_completed = all(item.get("status") == "completed" for item in todo_list)
+    if _is_final_agent_reply(state) and (not todo_list or all_completed):
         context_tags = normalize_context_tags(state.get("context_tags"))[:4]
         return {
             "task_complexity": state.get("task_complexity", "simple"),

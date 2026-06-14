@@ -384,33 +384,33 @@ function renderModelOutput(content) {
 }
 
 
-function renderAssistantMarkdown(content) {
+function renderAssistantMarkdown(content, isIntermediate = false) {
   if (!window.marked || !window.DOMPurify) {
-    return escapeHtml(content);
+    if (isIntermediate) return { processingHtml: `<div class="process-item text-item">${escapeHtml(content)}</div>`, formalHtml: "" };
+    return { processingHtml: "", formalHtml: escapeHtml(content) };
   }
-  
-  let html = "";
+  let processingHtml = "";
+  let formalHtml = "";
   const blockRe = /<think>([\s\S]*?)<\/think>/gi;
   let cursor = 0;
   let match;
 
+  function renderText(text) {
+    return DOMPurify.sanitize(marked.parse(text), {
+      USE_PROFILES: { html: true, mathMl: true },
+      ADD_ATTR: ["class", "style", "xmlns"]
+    });
+  }
+
   while ((match = blockRe.exec(content)) !== null) {
     const textBefore = content.substring(cursor, match.index).trim();
     if (textBefore) {
-      html += DOMPurify.sanitize(marked.parse(textBefore), {
-        USE_PROFILES: { html: true, mathMl: true },
-        ADD_ATTR: ["class", "style", "xmlns"]
-      });
+      if (isIntermediate) processingHtml += `<div class="process-item text-item">${renderText(textBefore)}</div>`;
+      else formalHtml += renderText(textBefore);
     }
-    
     const thinkContent = match[1].trim();
     if (thinkContent) {
-      html += `
-        <details class="chat-think-details">
-          <summary class="chat-think-summary">🧠 思考过程 (点击收起/展开)</summary>
-          <div class="chat-think-content">${escapeHtml(thinkContent)}</div>
-        </details>
-      `;
+      processingHtml += `<div class="chat-think-content">${escapeHtml(thinkContent)}</div>`;
     }
     cursor = blockRe.lastIndex;
   }
@@ -421,28 +421,19 @@ function renderAssistantMarkdown(content) {
   if (openMatch) {
     const textBefore = remainder.substring(0, openMatch.index).trim();
     if (textBefore) {
-      html += DOMPurify.sanitize(marked.parse(textBefore), {
-        USE_PROFILES: { html: true, mathMl: true },
-        ADD_ATTR: ["class", "style", "xmlns"]
-      });
+      if (isIntermediate) processingHtml += `<div class="process-item text-item">${renderText(textBefore)}</div>`;
+      else formalHtml += renderText(textBefore);
     }
     const thinkContent = openMatch[1].trim();
     if (thinkContent) {
-      html += `
-        <details class="chat-think-details" open data-streaming="true">
-          <summary class="chat-think-summary">🧠 思考过程 (点击收起/展开)</summary>
-          <div class="chat-think-content">${escapeHtml(thinkContent)}</div>
-        </details>
-      `;
+      processingHtml += `<div class="chat-think-content">${escapeHtml(thinkContent)}</div>`;
     }
   } else if (remainder.trim()) {
-    html += DOMPurify.sanitize(marked.parse(remainder.trim()), {
-      USE_PROFILES: { html: true, mathMl: true },
-      ADD_ATTR: ["class", "style", "xmlns"]
-    });
+    if (isIntermediate) processingHtml += `<div class="process-item text-item">${renderText(remainder.trim())}</div>`;
+    else formalHtml += renderText(remainder.trim());
   }
 
-  return html || escapeHtml(content);
+  return { processingHtml, formalHtml };
 }
 
 function messageBlocks(message) {
@@ -452,21 +443,29 @@ function messageBlocks(message) {
   return [{ type: "text", format: "markdown", content: String(message.content || "") }];
 }
 
-function renderAssistantBlocks(blocks) {
-  return blocks
-    .map((block) => {
-      if (block && block.type === "widget") {
-        const config = { widget_type: block.widget_type, id: block.id || "", props: block.props || {} };
-        if (window.__webConfig?.mapbox_access_token) {
-          config.props.access_token = window.__webConfig.mapbox_access_token;
-        }
-        return `<div class="chat-widget" data-widget="${escapeHtml(JSON.stringify(config))}"></div>`;
+function renderAssistantBlocks(blocks, isIntermediate = false) {
+  let processingHtml = "";
+  let formalHtml = "";
+  
+  for (const block of blocks) {
+    if (block && block.type === "widget") {
+      const config = { widget_type: block.widget_type, id: block.id || "", props: block.props || {} };
+      if (window.__webConfig?.mapbox_access_token) {
+        config.props.access_token = window.__webConfig.mapbox_access_token;
       }
+      const wHtml = `<div class="chat-widget" data-widget="${escapeHtml(JSON.stringify(config))}"></div>`;
+      if (isIntermediate) processingHtml += `<div class="process-item text-item">${wHtml}</div>`;
+      else formalHtml += wHtml;
+    } else {
       const text = String((block && block.content) || "");
-      if (!text.trim()) return "";
-      return `<div class="message-block-text">${renderAssistantMarkdown(text)}</div>`;
-    })
-    .join("");
+      if (text.trim()) {
+        const res = renderAssistantMarkdown(text, isIntermediate);
+        if (res.processingHtml) processingHtml += res.processingHtml;
+        if (res.formalHtml) formalHtml += `<div class="message-block-text">${res.formalHtml}</div>`;
+      }
+    }
+  }
+  return { processingHtml, formalHtml };
 }
 
 
@@ -499,7 +498,10 @@ function parseMessageBlocksJS(content) {
 let lastMessagesSignature = null;
 
 
+
 function renderMessages(messages, status, model_output) {
+  window.roundTimers = window.roundTimers || new Map();
+  
   const displayMessages = [...messages];
   if (status === "running") {
     if (model_output) {
@@ -507,29 +509,18 @@ function renderMessages(messages, status, model_output) {
       if (combinedRound) {
         const parsedBlocks = parseMessageBlocksJS(combinedRound);
         if (parsedBlocks) {
-          displayMessages.push({ role: "assistant", content: combinedRound, blocks: parsedBlocks });
+          displayMessages.push({ role: "assistant", content: combinedRound, blocks: parsedBlocks, __streaming: true });
         } else {
-          displayMessages.push({ role: "assistant", content: combinedRound });
+          displayMessages.push({ role: "assistant", content: combinedRound, __streaming: true });
         }
       }
     }
-    
-    // Append a loading status indicator
-    const lastEvent = currentState.events && currentState.events.length > 0 ? currentState.events[currentState.events.length - 1] : null;
-    let loadingText = "处理中";
-    if (lastEvent && lastEvent.title) {
-      loadingText = lastEvent.title;
-    }
-    displayMessages.push({
-      role: "system_status",
-      content: loadingText
-    });
   }
 
   const signature = JSON.stringify(
-    displayMessages.map((m) => ({ role: m.role, blocks: m.blocks || null, content: m.content || "" }))
+    displayMessages.map((m) => ({ role: m.role, blocks: m.blocks || null, content: m.content || "", tool_calls: m.tool_calls || [] }))
   );
-  if (signature === lastMessagesSignature) return;
+  if (signature === lastMessagesSignature && status !== "running") return;
   lastMessagesSignature = signature;
 
   const isAtBottom = els.messageList.scrollHeight - els.messageList.scrollTop - els.messageList.clientHeight <= 50;
@@ -543,67 +534,153 @@ function renderMessages(messages, status, model_output) {
     els.messageList.innerHTML = "";
   }
 
-  const currentNodes = Array.from(els.messageList.children);
+  const rounds = [];
+  let currentRound = null;
+  let processingText = "处理中";
+  const lastEvent = currentState.events && currentState.events.length > 0 ? currentState.events[currentState.events.length - 1] : null;
+  if (lastEvent && lastEvent.title) processingText = lastEvent.title;
 
   for (let i = 0; i < displayMessages.length; i++) {
     const msg = displayMessages[i];
-    const role = escapeHtml(msg.role || "assistant");
-    const sig = JSON.stringify({ role: msg.role, blocks: msg.blocks || null, content: msg.content || "" });
+    if (msg.role === "user") {
+      if (currentRound) rounds.push(currentRound);
+      currentRound = { id: msg.id || `round-user-${i}`, userMsg: msg, assistantMsgs: [], isStreaming: false };
+    } else {
+      if (!currentRound) {
+        currentRound = { id: `round-initial`, userMsg: null, assistantMsgs: [], isStreaming: false };
+      }
+      currentRound.assistantMsgs.push(msg);
+      if (msg.__streaming) currentRound.isStreaming = true;
+    }
+  }
+  if (currentRound) rounds.push(currentRound);
+
+  if (status === "running" && currentRound) {
+    currentRound.isStreaming = true;
+  }
+
+  for (const round of rounds) {
+    if (round.isStreaming) {
+      if (!window.roundTimers.has(round.id)) {
+         window.roundTimers.set(round.id, { start: Date.now(), end: null });
+      }
+    } else {
+      if (window.roundTimers.has(round.id)) {
+         let t = window.roundTimers.get(round.id);
+         if (!t.end) t.end = Date.now();
+      } else {
+         window.roundTimers.set(round.id, { start: Date.now(), end: Date.now() });
+      }
+    }
+  }
+
+  const currentNodes = Array.from(els.messageList.children);
+
+  for (let i = 0; i < rounds.length; i++) {
+    const round = rounds[i];
+    
+    let timerText = "";
+    const t = window.roundTimers.get(round.id);
+    if (t) {
+       const ms = (t.end || Date.now()) - t.start;
+       timerText = formatDuration(ms);
+    }
+    
+    const sig = JSON.stringify(round) + timerText;
     
     let node = currentNodes[i];
-    if (node && node.dataset.sig === sig) {
-      continue;
+    if (node && node.dataset.sig === sig) continue;
+    
+    let userHtml = "";
+    if (round.userMsg) {
+      userHtml = `<div class="message user">${escapeHtml(round.userMsg.content)}</div>`;
     }
     
-    let inner = "";
-    if (role === "assistant") {
-      inner = renderAssistantBlocks(messageBlocks(msg));
-    } else if (role === "system_status") {
-      inner = `
-        <div style="display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px;">
-          <style>@keyframes spin { 100% { transform: rotate(360deg); } }</style>
-          <svg viewBox="0 0 50 50" style="width: 14px; height: 14px; animation: spin 1s linear infinite;">
-            <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="6" stroke-dasharray="31.4 31.4" stroke-linecap="round"></circle>
+    let processingHtml = "";
+    let formalHtml = "";
+    
+    for (let j = 0; j < round.assistantMsgs.length; j++) {
+      const msg = round.assistantMsgs[j];
+      const isLastMsg = j === round.assistantMsgs.length - 1;
+      const isIntermediate = !isLastMsg || (msg.tool_calls && msg.tool_calls.length > 0);
+
+      if (msg.role === "tool") {
+        const contentStr = String(msg.content || "");
+        const truncated = contentStr.length > 500 ? contentStr.substring(0, 500) + "..." : contentStr;
+        processingHtml += `<div class="process-item tool-result-item">🔧 工具返回: ${escapeHtml(truncated)}</div>`;
+      } else if (msg.role === "assistant") {
+        const text = String(msg.content || "");
+        if (text || msg.blocks) {
+          const blocks = msg.blocks || (text ? [{type: "text", content: text}] : []);
+          const res = renderAssistantBlocks(blocks, isIntermediate);
+          processingHtml += res.processingHtml;
+          formalHtml += res.formalHtml;
+        }
+        if (msg.tool_calls && msg.tool_calls.length) {
+          for (const call of msg.tool_calls) {
+            processingHtml += `<div class="process-item tool-call-item">🚀 调用工具: ${escapeHtml(call.name)}</div>`;
+          }
+        }
+      } else if (msg.role === "system_status") {
+        processingHtml += `<div class="process-item system-status-item">
+          <svg viewBox="0 0 50 50" class="spin-svg" style="width: 14px; height: 14px; margin-right: 6px; vertical-align: middle; animation: spin 1s linear infinite;">
+             <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="6" stroke-dasharray="31.4 31.4" stroke-linecap="round"></circle>
           </svg>
-          <span>${escapeHtml(msg.content)}...</span>
-        </div>
-      `;
-    } else {
-      inner = escapeHtml(String(msg.content || ""));
+          ${escapeHtml(msg.content)}...
+        </div>`;
+      }
     }
+
+    let assistantHtml = "";
+    if (processingHtml || formalHtml || round.isStreaming) {
+      let detailsHtml = "";
+      if (processingHtml || round.isStreaming) {
+        const summaryText = round.isStreaming ? `${processingText}... (${timerText})` : `已处理 (${timerText})`;
+        detailsHtml = `
+          <details class="assistant-process-details chat-think-details" ${round.isStreaming ? 'open data-streaming="true"' : ''}>
+            <summary class="chat-think-summary">
+              <svg viewBox="0 0 50 50" class="spin-svg" style="width: 14px; height: 14px; margin-right: 6px; vertical-align: middle; ${!round.isStreaming ? 'display: none;' : 'animation: spin 1s linear infinite;'}">
+                 <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="6" stroke-dasharray="31.4 31.4" stroke-linecap="round"></circle>
+              </svg>
+              ${escapeHtml(summaryText)}
+            </summary>
+            <div class="assistant-process-content chat-think-content">
+              ${processingHtml}
+              ${round.isStreaming && !processingHtml.includes("spin-svg") ? `<div class="process-item system-status-item" style="color: var(--muted); font-size: 13px;">等待后续输出...</div>` : ''}
+            </div>
+          </details>
+        `;
+      }
+      
+      let formalContainerHtml = "";
+      if (formalHtml) {
+        formalContainerHtml = `<div class="assistant-formal-reply">${formalHtml}</div>`;
+      }
+      
+      assistantHtml = `<div class="message assistant chat-round-assistant" style="background: transparent; border: none; padding: 0; box-shadow: none;">
+        ${detailsHtml}
+        ${formalContainerHtml}
+      </div>`;
+    }
+    
+    let inner = userHtml + assistantHtml;
 
     if (!node) {
       node = document.createElement("div");
+      node.className = "chat-round";
       els.messageList.appendChild(node);
-    }
-
-    if (role === "system_status") {
-      node.className = `message system-status-message`;
-      node.style.background = "transparent";
-      node.style.border = "none";
-      node.style.padding = "4px 12px";
-      node.style.boxShadow = "none";
-    } else {
-      node.className = `message ${role}`;
-      // Clear inline styles if any
-      node.style.background = "";
-      node.style.border = "";
-      node.style.padding = "";
-      node.style.boxShadow = "";
     }
 
     const existingWidgets = new Map();
     node.querySelectorAll(".chat-widget").forEach(w => {
-      if (w.dataset.hydrated) {
-        existingWidgets.set(w.dataset.widget, w);
-      }
+      if (w.dataset.hydrated) existingWidgets.set(w.dataset.widget, w);
     });
     
     const existingDetails = [];
     node.querySelectorAll("details.chat-think-details").forEach(d => {
       existingDetails.push({ open: d.open, wasStreaming: d.dataset.streaming === "true" });
     });
-    
+
     node.dataset.sig = sig;
     node.innerHTML = inner;
 
@@ -612,37 +689,29 @@ function renderMessages(messages, status, model_output) {
         const state = existingDetails[index];
         const isStreamingNow = d.dataset.streaming === "true";
         if (state.wasStreaming && !isStreamingNow) {
-          // Just finished streaming, allow the new HTML default (closed) to take effect
+          // just finished
         } else {
-          if (state.open) {
-            d.setAttribute("open", "");
-          } else {
-            d.removeAttribute("open");
-          }
+          if (state.open) d.setAttribute("open", "");
+          else d.removeAttribute("open");
         }
       }
     });
 
     node.querySelectorAll(".chat-widget").forEach(w => {
       const saved = existingWidgets.get(w.dataset.widget);
-      if (saved) {
-        w.parentNode.replaceChild(saved, w);
-      }
+      if (saved) w.parentNode.replaceChild(saved, w);
     });
 
     hydrateWidgets(node);
   }
 
-  // Remove excess nodes
-  for (let i = displayMessages.length; i < currentNodes.length; i++) {
+  for (let i = rounds.length; i < currentNodes.length; i++) {
     if (currentNodes[i] && currentNodes[i].parentNode) {
       currentNodes[i].parentNode.removeChild(currentNodes[i]);
     }
   }
 
-  if (isAtBottom) {
-    els.messageList.scrollTop = els.messageList.scrollHeight;
-  }
+  if (isAtBottom) els.messageList.scrollTop = els.messageList.scrollHeight;
 }
 
 function hydrateWidgets(root) {
@@ -2031,11 +2100,26 @@ function queueRenderStream() {
   }, 50);
 }
 
+let timerInterval = null;
+
 function renderState(state, isStream = false) {
   currentState = { ...currentState, ...(state || {}) };
   state = currentState;
   const status = state.status || "idle";
   
+  if (status === "running") {
+    if (!timerInterval) {
+      timerInterval = setInterval(() => {
+        queueRenderStream();
+      }, 1000);
+    }
+  } else {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+  }
+
   if (!isStream) {
     setBadge(els.statusBadge, statusLabel(status), status);
     const node = state.current_node || "-";
