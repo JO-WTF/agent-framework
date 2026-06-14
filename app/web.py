@@ -378,8 +378,7 @@ class WebConsoleCallback(AsyncCallbackHandler):
         node_name = self.session.state.get("llm_active_node") or "agent"
         self.session.state["current_node"] = node_name
         self.session.state["_thinking_field_used"] = False
-        if self.session.state["model_output"]:
-            self.session.state["model_output"] += "\n\n[[MODEL_OUTPUT_ROUND_BREAK]]\n\n"
+        self.session.state["model_output"] = ""
         await self.session.start_node_llm_run(node_name, prompts)
 
     async def on_llm_new_token(self, token: str, **kwargs) -> None:
@@ -650,6 +649,8 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                 if serialized_messages:
                     processed = post_process_serialized_messages(serialized_messages, session)
                     session.state["messages"].extend(processed)
+                    if node_name in ["agent", "network_specialist_agent"]:
+                        session.state["model_output"] = ""
 
                 if (last_event and last_event.get("type") == "node_update" 
                         and last_event.get("node") == node_name):
@@ -729,10 +730,6 @@ async def run_agent(user_message: HumanMessage, session: ConsoleSession, session
                         final_reply = message
 
         if final_reply:
-            import re
-            model_output = session.state.get("model_output", "")
-            final_content = re.sub(r"\n*\[\[MODEL_OUTPUT_ROUND_BREAK\]\]\n*", "\n\n", model_output)
-            final_reply.content = final_content.strip()
 
             session.memory_messages.append(final_reply)
             session.memory_messages = trim_messages(session.memory_messages, session_id=session_id)
