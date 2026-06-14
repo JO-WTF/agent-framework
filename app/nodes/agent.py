@@ -6,7 +6,17 @@ from app.logging_config import logger
 from app.llm_logging import log_llm_request, log_llm_response
 from app.memory.store import trim_messages
 from app.nodes.common import format_todo_context, get_system_prompt
-from app.tools.registry import get_tools_for_agent_role
+from app.tools.registry import get_agent_tools
+
+
+def _recent_text_for_tool_selection(messages: list, limit: int = 6) -> str:
+    parts: list[str] = []
+    for message in messages[-limit:]:
+        parts.append(str(getattr(message, "content", "")))
+        tool_calls = getattr(message, "tool_calls", None)
+        if tool_calls:
+            parts.append(str(tool_calls))
+    return "\n".join(parts)
 
 
 async def _run_agent_node(
@@ -26,7 +36,13 @@ async def _run_agent_node(
         f"【Orchestrator 任务计划】\n{format_todo_context(state)}"
     )
     session_id = state.get("session_id")
-    messages = [SystemMessage(content=system_prompt)] + trim_messages(state["messages"], session_id=session_id)
+    trimmed_history = trim_messages(state["messages"], session_id=session_id)
+    messages = [SystemMessage(content=system_prompt)] + trimmed_history
+    agent_tools = get_agent_tools(
+        agent_role=agent_role,
+        context_tags=selected_context_tags,
+        recent_text=_recent_text_for_tool_selection(trimmed_history),
+    )
     log_llm_request(node_name, messages)
 
     session = None
@@ -39,7 +55,7 @@ async def _run_agent_node(
     try:
         response = await (
             get_llm_client_from_config(config)
-            .bind_tools(get_tools_for_agent_role(agent_role))
+            .bind_tools(agent_tools)
             .ainvoke(messages, config)
         )
     finally:

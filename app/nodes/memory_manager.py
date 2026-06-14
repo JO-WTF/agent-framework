@@ -191,8 +191,6 @@ def route_after_memory(state: AgentState) -> str:
         return _route_to_selected_agent(state)
 
     if origin == "orchestrator":
-        if state.get("orchestrator_next") == "evaluate" and isinstance(last_message, AIMessage):
-            return "evaluate"
         return _route_to_selected_agent(state)
 
     if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):

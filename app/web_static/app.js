@@ -406,7 +406,7 @@ function renderAssistantMarkdown(content) {
     const thinkContent = match[1].trim();
     if (thinkContent) {
       html += `
-        <details class="chat-think-details" open>
+        <details class="chat-think-details">
           <summary class="chat-think-summary">🧠 思考过程 (点击收起/展开)</summary>
           <div class="chat-think-content">${escapeHtml(thinkContent)}</div>
         </details>
@@ -429,7 +429,7 @@ function renderAssistantMarkdown(content) {
     const thinkContent = openMatch[1].trim();
     if (thinkContent) {
       html += `
-        <details class="chat-think-details" open>
+        <details class="chat-think-details" open data-streaming="true">
           <summary class="chat-think-summary">🧠 思考过程 (点击收起/展开)</summary>
           <div class="chat-think-content">${escapeHtml(thinkContent)}</div>
         </details>
@@ -457,6 +457,9 @@ function renderAssistantBlocks(blocks) {
     .map((block) => {
       if (block && block.type === "widget") {
         const config = { widget_type: block.widget_type, id: block.id || "", props: block.props || {} };
+        if (window.__webConfig?.mapbox_access_token) {
+          config.props.access_token = window.__webConfig.mapbox_access_token;
+        }
         return `<div class="chat-widget" data-widget="${escapeHtml(JSON.stringify(config))}"></div>`;
       }
       const text = String((block && block.content) || "");
@@ -495,6 +498,7 @@ function parseMessageBlocksJS(content) {
 
 let lastMessagesSignature = null;
 
+
 function renderMessages(messages, status, model_output) {
   const displayMessages = [...messages];
   if (status === "running") {
@@ -530,7 +534,7 @@ function renderMessages(messages, status, model_output) {
 
   const isAtBottom = els.messageList.scrollHeight - els.messageList.scrollTop - els.messageList.clientHeight <= 50;
 
-    if (!displayMessages.length) {
+  if (!displayMessages.length) {
     els.messageList.innerHTML = `<div class="empty">暂无对话</div>`;
     return;
   }
@@ -597,7 +601,7 @@ function renderMessages(messages, status, model_output) {
     
     const existingDetails = [];
     node.querySelectorAll("details.chat-think-details").forEach(d => {
-      existingDetails.push(d.open);
+      existingDetails.push({ open: d.open, wasStreaming: d.dataset.streaming === "true" });
     });
     
     node.dataset.sig = sig;
@@ -605,10 +609,16 @@ function renderMessages(messages, status, model_output) {
 
     node.querySelectorAll("details.chat-think-details").forEach((d, index) => {
       if (index < existingDetails.length) {
-        if (existingDetails[index]) {
-          d.setAttribute("open", "");
+        const state = existingDetails[index];
+        const isStreamingNow = d.dataset.streaming === "true";
+        if (state.wasStreaming && !isStreamingNow) {
+          // Just finished streaming, allow the new HTML default (closed) to take effect
         } else {
-          d.removeAttribute("open");
+          if (state.open) {
+            d.setAttribute("open", "");
+          } else {
+            d.removeAttribute("open");
+          }
         }
       }
     });
@@ -630,7 +640,6 @@ function renderMessages(messages, status, model_output) {
     }
   }
 
-
   if (isAtBottom) {
     els.messageList.scrollTop = els.messageList.scrollHeight;
   }
@@ -638,6 +647,8 @@ function renderMessages(messages, status, model_output) {
 
 function hydrateWidgets(root) {
   root.querySelectorAll(".chat-widget").forEach((placeholder) => {
+    if (placeholder.dataset.hydrated) return;
+    
     let config;
     try {
       config = JSON.parse(placeholder.dataset.widget || "{}");
@@ -648,6 +659,7 @@ function hydrateWidgets(root) {
     const renderer = WIDGET_RENDERERS[config.widget_type] || renderUnknownWidget;
     try {
       renderer(placeholder, config.props || {}, config);
+      placeholder.dataset.hydrated = "true";
     } catch (error) {
       console.error(`Failed to render widget "${config.widget_type}"`, error);
       placeholder.classList.add("chat-widget-error");
@@ -692,6 +704,52 @@ function createWidgetCard(placeholder, { title, icon, fullscreen = false } = {})
   card.appendChild(body);
   placeholder.appendChild(card);
   return { card, header, body };
+}
+const activeMapInstances = [];
+const MAX_ACTIVE_MAPS = 8;
+
+function enforceMapContextLimit() {
+  // Clean up maps that are no longer in the DOM
+  for (let i = activeMapInstances.length - 1; i >= 0; i--) {
+    if (!document.body.contains(activeMapInstances[i].mapEl)) {
+      try {
+        if (activeMapInstances[i].map) activeMapInstances[i].map.remove();
+      } catch (e) {}
+      activeMapInstances.splice(i, 1);
+    }
+  }
+
+  while (activeMapInstances.length > MAX_ACTIVE_MAPS) {
+    const oldest = activeMapInstances.shift();
+    try {
+      if (oldest.map) {
+        oldest.map.remove();
+        oldest.map = null;
+      }
+    } catch (e) {
+      console.error("Failed to remove oldest map context", e);
+    }
+    
+    oldest.mapEl.innerHTML = "";
+    oldest.mapEl.className = "widget-map widget-map-suspended";
+    
+    const overlay = document.createElement("div");
+    overlay.className = "widget-map-overlay";
+    overlay.textContent = "为了节省系统资源，此地图已被暂时挂起。";
+    
+    const btn = document.createElement("button");
+    btn.className = "widget-map-reactivate-btn";
+    btn.textContent = "点击重新激活";
+    btn.onclick = () => {
+      oldest.mapEl.innerHTML = "";
+      oldest.mapEl.className = "widget-map";
+      // This will recursively add it back to activeMapInstances and enforce limit again
+      renderMapInstance(oldest.placeholder, oldest.mapEl, oldest.props);
+    };
+    
+    oldest.mapEl.appendChild(overlay);
+    oldest.mapEl.appendChild(btn);
+  }
 }
 
 function renderMapWidget(placeholder, props, config) {
@@ -802,6 +860,8 @@ function renderMapInstance(placeholder, mapEl, props) {
   let map;
   try {
     map = new mapboxgl.Map(mapOptions);
+    activeMapInstances.push({ map, placeholder, mapEl, props });
+    enforceMapContextLimit();
   } catch (error) {
     mapEl.className = "widget-map widget-map-pending";
     mapEl.textContent = `地图加载失败：${error.message}`;
@@ -1961,6 +2021,16 @@ function renderRoutes(state) {
   renderMermaidRouteDiagram(mermaidDefinition, renderVersion);
 }
 
+let renderStreamTimeout = null;
+function queueRenderStream() {
+  if (renderStreamTimeout) return;
+  renderStreamTimeout = setTimeout(() => {
+    renderStreamTimeout = null;
+    const status = currentState.status || "idle";
+    renderMessages(currentState.messages || [], status, currentState.model_output);
+  }, 50);
+}
+
 function renderState(state, isStream = false) {
   currentState = { ...currentState, ...(state || {}) };
   state = currentState;
@@ -1980,7 +2050,11 @@ function renderState(state, isStream = false) {
     }
   }
 
-  renderMessages(state.messages || [], status, state.model_output);
+  if (isStream) {
+    queueRenderStream();
+  } else {
+    renderMessages(state.messages || [], status, state.model_output);
+  }
   
   if (!isStream) {
     renderEvents(state.events || []);

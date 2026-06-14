@@ -97,8 +97,9 @@ Memory Manager 根据 `last_node` 判断：
 - `agent` + tool calls => `tools`
 - `agent` + final AI reply => `orchestrator`
 - `tools` => `orchestrator`
-- `orchestrator` + `orchestrator_next=evaluate` + final AI reply => `evaluate`
 - 其他 orchestrator 输出 => `agent`
+
+Evaluator 只由 Orchestrator 的条件边进入：最终回复路径是 `agent/network_specialist_agent -> memory -> orchestrator -> evaluate`。
 
 新增节点时必须明确它会不会进入 Memory Manager，以及是否需要扩展 `route_after_memory()`。
 

@@ -16,7 +16,13 @@ async def search_web(query: str, config: RunnableConfig = None) -> str:
     try:
         loop = asyncio.get_event_loop()
         res = await loop.run_in_executor(None, lambda: search_client.search(query=query, max_results=3))
-        results = [f"- {r['title']}: {r['content']}" for r in res.get("results", [])]
+        results = []
+        for item in res.get("results", []):
+            title = item.get("title", "(无标题)")
+            url = item.get("url", "")
+            content = item.get("content", "")
+            source = f"\n  来源: {url}" if url else ""
+            results.append(f"- {title}: {content}{source}")
         text = "\n".join(results) if results else "未找到相关结果。"
         store_tool_result_for_current_session("search_web", text, {"query": query, "result_count": len(results)})
         return text

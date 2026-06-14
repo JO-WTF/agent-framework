@@ -135,10 +135,22 @@ class GeocodingToolTests(unittest.IsolatedAsyncioTestCase):
         geo_names = {tool.name for tool in TOOL_CATEGORIES["geo"]}
         visualization_names = {tool.name for tool in TOOL_CATEGORIES["visualization"]}
 
-        self.assertEqual(geo_names, {"geocode_address", "reverse_geocode"})
+        self.assertEqual(
+            geo_names,
+            {
+                "geocode_address",
+                "reverse_geocode",
+                "get_administrative_regions",
+                "get_administrative_boundary",
+                "calculate_geodesic_distance",
+                "get_route_directions",
+                "find_nearby_pois",
+                "get_elevation",
+            },
+        )
         self.assertEqual(visualization_names, {"render_map_card"})
-        self.assertNotIn("geocode_address", general_names)
-        self.assertNotIn("render_map_card", general_names)
+        self.assertIn("geocode_address", general_names)
+        self.assertIn("render_map_card", general_names)
         self.assertIn("geocode_address", network_names)
         self.assertIn("render_map_card", network_names)
         self.assertEqual(TOOL_CATEGORY_BY_NAME["reverse_geocode"], "geo")

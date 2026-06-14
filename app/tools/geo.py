@@ -7,12 +7,13 @@ from geopy.distance import geodesic
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import tool
 
+from app.config import PROMPTS
 from app.logging_config import logger
 from app.memory.store import save_agent_note
 from app.tools.context import get_session_id_from_config_or_context
 from app.tools.storage import store_tool_result_for_current_session, StructuredToolResult
 
-@tool
+@tool(description=PROMPTS["tools"]["get_administrative_regions"])
 async def get_administrative_regions(country_code: str, level: str = "1") -> str:
     """获取行政区划列表及全量边界数据。
     通过 geoBoundaries API 获取指定国家和层级的行政区列表，同时会在后台保存包含所有这些行政区的全量 GeoJSON 边界数据，非常适合用于一次性在地图上渲染整个国家的省市边界！
@@ -59,7 +60,7 @@ async def get_administrative_regions(country_code: str, level: str = "1") -> str
         logger.error(f"get_administrative_regions error: {e}")
         return f"执行失败: {e}"
 
-@tool
+@tool(description=PROMPTS["tools"]["get_administrative_boundary"])
 async def get_administrative_boundary(country_code: str, region_name: str, level: str = "1") -> str:
     """获取特定行政区的多边形边界数据 (GeoJSON)。
     参数:
@@ -103,7 +104,7 @@ async def get_administrative_boundary(country_code: str, region_name: str, level
         logger.error(f"get_administrative_boundary error: {e}")
         return f"执行失败: {e}"
 
-@tool
+@tool(description=PROMPTS["tools"]["calculate_geodesic_distance"])
 def calculate_geodesic_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> str:
     """计算地球表面两点之间的最短直线距离（测地线距离）。
     参数:
@@ -117,7 +118,7 @@ def calculate_geodesic_distance(lat1: float, lon1: float, lat2: float, lon2: flo
     except Exception as e:
         return f"计算距离失败: {e}"
 
-@tool
+@tool(description=PROMPTS["tools"]["get_route_directions"])
 async def get_route_directions(start_lat: float, start_lon: float, end_lat: float, end_lon: float, profile: str = "driving") -> str:
     """使用 OSRM API 获取导航路线、驾驶距离和预计耗时。
     参数:
@@ -167,7 +168,7 @@ async def get_route_directions(start_lat: float, start_lon: float, end_lat: floa
         logger.error(f"get_route_directions error: {e}")
         return f"执行失败: {e}"
 
-@tool
+@tool(description=PROMPTS["tools"]["find_nearby_pois"])
 async def find_nearby_pois(lat: float, lon: float, radius: int, poi_type: str = "hospital") -> str:
     """使用 OpenStreetMap Overpass API 查找周边特定类型的兴趣点 (POI)。
     参数:
@@ -210,7 +211,7 @@ async def find_nearby_pois(lat: float, lon: float, radius: int, poi_type: str = 
         logger.error(f"find_nearby_pois error: {e}")
         return f"执行失败: {e}"
 
-@tool
+@tool(description=PROMPTS["tools"]["get_elevation"])
 async def get_elevation(lat: float, lon: float) -> str:
     """获取指定经纬度的地形海拔高度（高程）。
     基于 Open-Elevation API (返回单位: 米)。

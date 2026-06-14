@@ -8,8 +8,10 @@ os.environ.setdefault("TAVILY_API_KEY", "dummy")
 
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 
+from app.cli import route_after_orchestrator
 from app.nodes.memory_manager import build_world_state, memory_manager_node, route_after_memory
 from app.nodes.common import format_todo_context
+from app.nodes.orchestrator import orchestrator_node
 from app.runtime_paths import get_session_dir
 
 
@@ -74,6 +76,7 @@ class MemoryManagerTests(unittest.IsolatedAsyncioTestCase):
 {
   "runtime": "docker",
   "container": "agent-sandbox-test",
+  "status": "running",
   "image": "python:3.12-slim",
   "source_dir": "/repo",
   "work_dir": "/repo/.data/sessions/unit-sandbox-running/sandbox_work/shared"
@@ -155,10 +158,78 @@ class MemoryManagerTests(unittest.IsolatedAsyncioTestCase):
             "messages": [AIMessage(content="", tool_calls=[{"id": "call-1", "name": "run_command", "args": {}}], id="m1")],
             "last_node": "agent",
         }
+        agent_final_reply_state = {
+            "messages": [AIMessage(content="任务已完成", id="m1")],
+            "last_node": "agent",
+        }
 
         self.assertEqual(route_after_memory(tool_message_state), "agent")
-        self.assertEqual(route_after_memory(tool_output_state), "orchestrator")
+        self.assertEqual(route_after_memory(tool_output_state), "agent")
         self.assertEqual(route_after_memory(agent_tool_call_state), "tools")
+        self.assertEqual(route_after_memory(agent_final_reply_state), "orchestrator")
+
+    async def test_orchestrator_fast_path_routes_final_reply_to_evaluator_without_llm(self):
+        state = {
+            "messages": [AIMessage(content="任务已完成", id="m1")],
+            "revision_count": 0,
+            "eval_status": "",
+            "session_id": "unit-test",
+            "task_complexity": "simple",
+            "context_tags": ["general"],
+            "todo_list": [{"id": "1", "title": "回答用户", "status": "completed", "children": []}],
+            "world_state": {},
+            "last_node": "agent",
+            "orchestrator_next": "agent",
+            "agent_role": "general",
+        }
+
+        with patch("app.nodes.orchestrator.llm_client.ainvoke") as ainvoke:
+            result = await orchestrator_node(state, {})
+
+        ainvoke.assert_not_called()
+        self.assertEqual(result["last_node"], "orchestrator")
+        self.assertEqual(result["orchestrator_next"], "evaluate")
+        self.assertEqual(route_after_orchestrator({**state, **result}), "evaluate")
+
+    async def test_orchestrator_fast_path_preserves_network_agent_role(self):
+        state = {
+            "messages": [AIMessage(content="网络诊断完成", id="m1")],
+            "revision_count": 0,
+            "eval_status": "",
+            "session_id": "unit-test",
+            "task_complexity": "simple",
+            "context_tags": ["network"],
+            "todo_list": [],
+            "world_state": {},
+            "last_node": "network_specialist_agent",
+            "orchestrator_next": "agent",
+            "agent_role": "network",
+        }
+
+        with patch("app.nodes.orchestrator.llm_client.ainvoke") as ainvoke:
+            result = await orchestrator_node(state, {})
+
+        ainvoke.assert_not_called()
+        self.assertEqual(result["agent_role"], "network")
+        self.assertEqual(result["orchestrator_next"], "evaluate")
+
+    def test_route_after_orchestrator_sends_non_evaluation_updates_to_memory(self):
+        state = {
+            "messages": [HumanMessage(content="请继续", id="m1")],
+            "orchestrator_next": "agent",
+        }
+
+        self.assertEqual(route_after_orchestrator(state), "memory")
+
+    def test_memory_router_never_routes_directly_to_evaluator(self):
+        state = {
+            "messages": [AIMessage(content="最终答复", id="m1")],
+            "last_node": "orchestrator",
+            "orchestrator_next": "evaluate",
+            "agent_role": "general",
+        }
+
+        self.assertEqual(route_after_memory(state), "agent")
 
     async def test_memory_router_defers_global_and_accepts_session_fast_path(self):
         state = {

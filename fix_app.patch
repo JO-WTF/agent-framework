@@ -1,0 +1,31 @@
+--- app/web_static/app.js
++++ app/web_static/app.js
+@@ -1966,6 +1966,16 @@
+   // skip non-stream rendering...
+ }
+ 
++let renderStreamTimeout = null;
++function queueRenderStream() {
++  if (renderStreamTimeout) return;
++  renderStreamTimeout = setTimeout(() => {
++    renderStreamTimeout = null;
++    const status = currentState.status || "idle";
++    renderMessages(currentState.messages || [], status, currentState.model_output);
++  }, 50);
++}
++
+ function renderState(state, isStream = false) {
+   currentState = { ...currentState, ...(state || {}) };
+   state = currentState;
+@@ -1980,7 +1990,11 @@
+     }
+   }
+ 
+-  renderMessages(state.messages || [], status, state.model_output);
++  if (isStream) {
++    queueRenderStream();
++  } else {
++    renderMessages(state.messages || [], status, state.model_output);
++  }
+   
+   if (!isStream) {

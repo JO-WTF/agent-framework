@@ -191,7 +191,7 @@ tool_error, memory, security, web
 - Agent 产生自然语言：回 `orchestrator`。
 - Tools 完成：回 `orchestrator`。
 - Orchestrator 决定继续：去 `agent`。
-- Orchestrator 决定质检：去 `evaluate`。
+- Orchestrator 决定质检：由 Orchestrator 条件边直接去 `evaluate`，不再经由 Memory Manager。
 
 把路由放在 Memory Manager 后面，是为了保证每次跳转前都先有机会固化状态。
 

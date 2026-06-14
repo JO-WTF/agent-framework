@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -88,6 +89,7 @@ class ConsoleSession:
             "agent_role": "general",
             "model_output": "",
             "tool_runs": [],
+            "_tool_runs_by_run_id": {},
             "events": [],
             "messages": [],
             "conversation_turns": [],
@@ -318,6 +320,7 @@ class ConsoleSession:
             "agent_role": "general",
             "model_output": "",
             "tool_runs": [],
+            "_tool_runs_by_run_id": {},
             "events": [],
             "messages": [],
             "conversation_turns": [],
@@ -423,8 +426,10 @@ class WebConsoleCallback(AsyncCallbackHandler):
 
     async def on_tool_start(self, serialized, input_str, **kwargs):
         name = serialized.get("name", "unknown_tool") if isinstance(serialized, dict) else "unknown_tool"
+        callback_run_id = str(kwargs.get("run_id") or uuid.uuid4())
         run = {
             "id": str(uuid.uuid4()),
+            "run_id": callback_run_id,
             "name": name,
             "status": "running",
             "input": input_str,
@@ -433,17 +438,20 @@ class WebConsoleCallback(AsyncCallbackHandler):
             "ended_at": "",
         }
         self.session.state["tool_runs"].append(run)
+        self.session.state.setdefault("_tool_runs_by_run_id", {})[callback_run_id] = run
         self.session.state["current_node"] = "tools"
         await self.session.publish({
             "type": "tool_start",
             "title": f"调用工具: {name} (运行中...)",
             "tool": run,
-            "details": {"tool": name, "input": input_str, "status": "running"},
+            "details": {"tool": name, "run_id": callback_run_id, "input": input_str, "status": "running"},
         })
 
     async def on_tool_end(self, output, **kwargs):
-        if self.session.state["tool_runs"]:
-            run = self.session.state["tool_runs"][-1]
+        callback_run_id = str(kwargs.get("run_id") or "")
+        run = self.session.state.setdefault("_tool_runs_by_run_id", {}).pop(callback_run_id, None)
+        if run or self.session.state["tool_runs"]:
+            run = run or self.session.state["tool_runs"][-1]
             output_content = getattr(output, "content", str(output))
             run["status"] = "success"
             run["output"] = output_content
@@ -452,7 +460,8 @@ class WebConsoleCallback(AsyncCallbackHandler):
             events = self.session.state["events"]
             last_event = None
             for e in reversed(events):
-                if e.get("type") == "tool_start" and e.get("details", {}).get("tool") == run["name"]:
+                details = e.get("details", {})
+                if e.get("type") == "tool_start" and details.get("run_id") == run.get("run_id"):
                     last_event = e
                     break
 
@@ -463,6 +472,7 @@ class WebConsoleCallback(AsyncCallbackHandler):
                 last_event["tool"] = run
                 last_event["details"] = {
                     "tool": run["name"],
+                    "run_id": run.get("run_id"),
                     "input": run["input"],
                     "output": run["output"],
                     "status": "success",
@@ -474,12 +484,14 @@ class WebConsoleCallback(AsyncCallbackHandler):
                     "type": "tool_end",
                     "title": f"工具完成: {run['name']}",
                     "tool": run,
-                    "details": {"tool": run["name"], "input": run["input"], "output": run["output"], "status": "success"},
+                    "details": {"tool": run["name"], "run_id": run.get("run_id"), "input": run["input"], "output": run["output"], "status": "success"},
                 })
 
     async def on_tool_error(self, error, **kwargs):
-        if self.session.state["tool_runs"]:
-            run = self.session.state["tool_runs"][-1]
+        callback_run_id = str(kwargs.get("run_id") or "")
+        run = self.session.state.setdefault("_tool_runs_by_run_id", {}).pop(callback_run_id, None)
+        if run or self.session.state["tool_runs"]:
+            run = run or self.session.state["tool_runs"][-1]
             run["status"] = "error"
             run["output"] = str(error)
             run["ended_at"] = datetime.now().strftime("%H:%M:%S")
@@ -487,7 +499,8 @@ class WebConsoleCallback(AsyncCallbackHandler):
             events = self.session.state["events"]
             last_event = None
             for e in reversed(events):
-                if e.get("type") == "tool_start" and e.get("details", {}).get("tool") == run["name"]:
+                details = e.get("details", {})
+                if e.get("type") == "tool_start" and details.get("run_id") == run.get("run_id"):
                     last_event = e
                     break
 
@@ -498,6 +511,7 @@ class WebConsoleCallback(AsyncCallbackHandler):
                 last_event["tool"] = run
                 last_event["details"] = {
                     "tool": run["name"],
+                    "run_id": run.get("run_id"),
                     "input": run["input"],
                     "error": run["output"],
                     "status": "error",
@@ -509,7 +523,7 @@ class WebConsoleCallback(AsyncCallbackHandler):
                     "type": "tool_error",
                     "title": f"工具失败: {run['name']}",
                     "tool": run,
-                    "details": {"tool": run["name"], "input": run["input"], "error": run["output"], "status": "error"},
+                    "details": {"tool": run["name"], "run_id": run.get("run_id"), "input": run["input"], "error": run["output"], "status": "error"},
                 })
 
 
@@ -534,6 +548,7 @@ def serialize_message(message: Any) -> dict[str, Any]:
             content = f"<think>\n{reasoning.strip()}\n</think>\n\n" + content
 
     payload: dict[str, Any] = {
+        "id": getattr(message, "id", None) or hashlib.sha1(f"{role}:{content}".encode("utf-8", errors="ignore")).hexdigest(),
         "role": role,
         "content": content,
         "tool_calls": getattr(message, "tool_calls", None) or [],
@@ -792,6 +807,7 @@ async def chat(request: Request, payload: ChatRequest):
         "world_state": {},
         "model_output": "",
         "tool_runs": [],
+        "_tool_runs_by_run_id": {},
         "events": [],
         "messages": session.get_serialized_messages(),
         "model_config": model_config,
@@ -822,6 +838,7 @@ async def resume_after_approval(session_id: str, session: ConsoleSession, approv
         "current_node": "orchestrator",
         "model_output": "",
         "tool_runs": [],
+        "_tool_runs_by_run_id": {},
         "messages": session.get_serialized_messages(),
         "llm_active_node": None,
     })
@@ -895,7 +912,7 @@ async def websocket_endpoint(websocket: WebSocket):
     session_id = websocket.query_params.get("session_id")
     session_id, session = manager.get_session(session_id)
     await websocket.accept()
-    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
     session.subscribers.add(queue)
     await websocket.send_json({"event": {"type": "snapshot"}, "session_id": session_id, "state": session.snapshot()})
     try:
@@ -930,4 +947,3 @@ async def shutdown_event():
         await asyncio.gather(*tasks, return_exceptions=True)
 
 # reload test comment v4
-

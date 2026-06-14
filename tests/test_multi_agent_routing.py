@@ -13,22 +13,21 @@ from app.tools.registry import get_tools_for_agent_role, GENERAL_AGENT_TOOLS, NE
 
 
 class MultiAgentRoutingTests(unittest.TestCase):
-    def test_tool_registry_isolation(self):
-        # General agent must not have geo and visualization tools
+    def test_tool_registry_exposes_geo_and_visualization_tools(self):
         general_tools = get_tools_for_agent_role("general")
         general_tool_names = {t.name for t in general_tools}
-        
-        self.assertNotIn("geocode_address", general_tool_names)
-        self.assertNotIn("reverse_geocode", general_tool_names)
-        self.assertNotIn("render_map_card", general_tool_names)
-        
-        # Network specialist agent must have geo and visualization tools
+
+        self.assertIn("geocode_address", general_tool_names)
+        self.assertIn("reverse_geocode", general_tool_names)
+        self.assertIn("render_map_card", general_tool_names)
+
         network_tools = get_tools_for_agent_role("network")
         network_tool_names = {t.name for t in network_tools}
-        
+
         self.assertIn("geocode_address", network_tool_names)
         self.assertIn("reverse_geocode", network_tool_names)
         self.assertIn("render_map_card", network_tool_names)
+        self.assertEqual(len(network_tool_names), len(network_tools))
         
     def test_route_after_memory_role_general(self):
         # When orchestrator decides agent_role is general, route to agent node
@@ -50,6 +49,15 @@ class MultiAgentRoutingTests(unittest.TestCase):
             "agent_role": "network",
         }
         
+        self.assertEqual(route_after_memory(state), "network_specialist_agent")
+
+    def test_route_after_tools_preserves_network_agent_role(self):
+        state = {
+            "messages": [ToolMessage(content="geo result", tool_call_id="call-1")],
+            "last_node": "tools",
+            "agent_role": "network",
+        }
+
         self.assertEqual(route_after_memory(state), "network_specialist_agent")
 
     def test_route_after_memory_role_default(self):

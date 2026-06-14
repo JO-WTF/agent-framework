@@ -140,7 +140,7 @@ with patch("app.nodes.tool_execution_subgraph.llm_client", FakeLLM()):
 | `agent` | `AIMessage(tool_calls)` | `tools` |
 | `agent` | final `AIMessage` | `orchestrator` |
 | `tools` | `ToolMessage` | `orchestrator` |
-| `orchestrator` | final `AIMessage` + `orchestrator_next=evaluate` | `evaluate` |
+| `orchestrator` | final `AIMessage` + `orchestrator_next=evaluate` | `agent`（Memory 不直达 Evaluator） |
 | `orchestrator` | `HumanMessage` | `agent` |
 
 ## 9. 测试新增工具

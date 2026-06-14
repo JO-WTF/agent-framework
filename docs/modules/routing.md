@@ -66,7 +66,8 @@ workflow.add_conditional_edges("evaluate", route_after_evaluation, ...)
 | `agent` | `AIMessage` 且无 `tool_calls` | `orchestrator` |
 | `tools` | `ToolMessage` | `orchestrator` |
 | `orchestrator` | 任意非最终可质检状态 | `agent` |
-| `orchestrator` | `orchestrator_next=evaluate` 且最后是最终 AI 答复 | `evaluate` |
+
+Evaluator 不再由 Memory Manager 直接进入。最终自然语言答复会先走 `agent/network_specialist_agent -> memory -> orchestrator`，随后由 Orchestrator 的条件边直接进入 `evaluate`，避免结束阶段出现 `orchestrator -> memory -> evaluate` 的重复 memory 节点。
 
 如果没有 `last_node`，工具结果和普通用户消息都可能被错误送进 Agent 或 Evaluator。
 
