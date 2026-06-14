@@ -452,8 +452,15 @@ function renderAssistantBlocks(blocks, isIntermediate = false) {
         config.props.access_token = window.__webConfig.mapbox_access_token;
       }
       const wHtml = `<div class="chat-widget" data-widget="${escapeHtml(JSON.stringify(config))}"></div>`;
-      if (isIntermediate) processingHtml += `<div class="process-item text-item">${wHtml}</div>`;
-      else formalHtml += wHtml;
+      if (isIntermediate) {
+        if (config.widget_type === "map") {
+          processingHtml += `<div class="process-item text-item" style="color: var(--text-secondary); font-size: 12px;">🗺️ 地图组件生成中...</div>`;
+        } else {
+          processingHtml += `<div class="process-item text-item" style="color: var(--text-secondary); font-size: 12px;">🧩 组件生成中...</div>`;
+        }
+      } else {
+        formalHtml += wHtml;
+      }
     } else {
       const text = String((block && block.content) || "");
       if (text.trim()) {
