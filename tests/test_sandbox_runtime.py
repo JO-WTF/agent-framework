@@ -24,6 +24,7 @@ class DockerSandboxRuntimeTests(unittest.TestCase):
             {
                 "AGENT_SANDBOX_USER": "1000:1000",
                 "AGENT_SANDBOX_WORKDIR": "/workspace/work",
+                "https_proxy": "http://proxy:8080",
             },
             clear=False,
         ):
@@ -51,6 +52,8 @@ class DockerSandboxRuntimeTests(unittest.TestCase):
         self.assertIn("-w", start_args)
         self.assertIn("/workspace/work", start_args)
         self.assertIn("python:3.12-slim", start_args)
+        self.assertIn("-e", start_args)
+        self.assertIn("https_proxy", start_args)
         self.assertNotIn("--network", start_args)
         self.assertTrue(any(item.endswith(":/workspace/work:rw") for item in start_args))
         self.assertEqual(exec_args[:3], ["docker", "exec", "-w"])
