@@ -2,8 +2,10 @@ import hashlib
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,24 @@ from app.runtime_paths import ROOT_DIR, get_session_dir
 from app.tools.context import ensure_session_id
 
 SHARED_MOUNTS_FILE = "shared_mounts.json"
+DEFAULT_SANDBOX_IMAGE = "agent-framework-sandbox:latest"
+DEFAULT_SANDBOX_VENV = "/workspace/work/venv"
+DOCKER_INSPECT_TIMEOUT_SECONDS = float(os.getenv("AGENT_DOCKER_INSPECT_TIMEOUT", "2"))
+_RUNNING_CONTAINER_CACHE_TTL_SECONDS = float(os.getenv("AGENT_SANDBOX_RUNNING_CACHE_TTL", "2"))
+_RUNNING_CONTAINER_CACHE: dict[str, float] = {}
+SANDBOX_ENV_ALLOWLIST = (
+    "MAPBOX_ACCESS_TOKEN",
+    "MAPBOX_API_KEY",
+    "HERE_API_KEY",
+    "HERE_APIKEY",
+    "TAVILY_API_KEY",
+    "OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "LLM_API_KEY",
+    "LLM_BASE_URL",
+    "REQUESTS_CA_BUNDLE",
+    "SSL_CERT_FILE",
+)
 
 
 @dataclass(frozen=True)
@@ -59,15 +79,9 @@ def get_sandbox_world_state(session_id: str | None) -> dict[str, Any] | None:
 
     container = str(metadata.get("container", ""))
     runtime_status = str(metadata.get("status", "unknown"))
-    if container and runtime_status != "stopped":
-        try:
-            running = inspect_container_running(container)
-            if running:
-                runtime_status = "running"
-            else:
-                runtime_status = "stopped"
-        except SandboxError as e:
-            runtime_status = f"unavailable: {str(e)}"
+    
+    # Removed synchronous docker inspect here as it blocks the event loop on every node traversal.
+    # We now trust the status recorded in metadata.
 
     return {
         "mode": "docker",
@@ -86,7 +100,7 @@ def inspect_container_running(container_name: str) -> bool | None:
             ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=DOCKER_INSPECT_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as e:
         raise SandboxError("Docker CLI command not found. Please make sure Docker is installed and in your PATH.") from e
@@ -108,7 +122,7 @@ class DockerSandboxRuntime:
         image: str | None = None,
         limits: ResourceLimits | None = None,
     ) -> None:
-        self.image = image or os.getenv("AGENT_SANDBOX_IMAGE", "jupyter/scipy-notebook:latest")
+        self.image = image or os.getenv("AGENT_SANDBOX_IMAGE") or DEFAULT_SANDBOX_IMAGE
         self.limits = limits or ResourceLimits(
             cpus=os.getenv("AGENT_SANDBOX_CPUS", "2"),
             memory=os.getenv("AGENT_SANDBOX_MEMORY", "2g"),
@@ -121,20 +135,22 @@ class DockerSandboxRuntime:
         self.shared_mounts = list_shared_mounts(self.session_id)
 
     def run_command(self, command: str) -> SandboxResult:
-        venv_activate_host = self.work_dir / "venv" / "bin" / "activate"
-        if venv_activate_host.exists():
-            wrapped_command = f". /workspace/work/venv/bin/activate && {command}"
-        else:
-            wrapped_command = command
-        return self._exec(["/bin/sh", "-lc", wrapped_command])
+        self.ensure_container()
+        self.ensure_default_venv()
+        venv_path = os.getenv("AGENT_SANDBOX_VENV", DEFAULT_SANDBOX_VENV)
+        quoted_venv = shlex.quote(venv_path)
+        wrapped_command = f". {quoted_venv}/bin/activate && {command}"
+        return self._exec(["/bin/sh", "-lc", wrapped_command], ensure_container=False)
 
     def run_python(self, code: str) -> SandboxResult:
-        venv_python_host = self.work_dir / "venv" / "bin" / "python"
-        python_exe = "/workspace/work/venv/bin/python" if venv_python_host.exists() else "python"
-        return self._exec([python_exe, "-c", code])
-
-    def _exec(self, container_command: list[str]) -> SandboxResult:
         self.ensure_container()
+        self.ensure_default_venv()
+        venv_path = os.getenv("AGENT_SANDBOX_VENV", DEFAULT_SANDBOX_VENV)
+        return self._exec([f"{venv_path}/bin/python", "-c", code], ensure_container=False)
+
+    def _exec(self, container_command: list[str], ensure_container: bool = True) -> SandboxResult:
+        if ensure_container:
+            self.ensure_container()
         args = [
             "docker",
             "exec",
@@ -164,7 +180,51 @@ class DockerSandboxRuntime:
             },
         )
 
+    def ensure_default_venv(self) -> None:
+        if os.getenv("AGENT_SANDBOX_AUTO_VENV", "1").strip().lower() in {"0", "false", "no", "n"}:
+            return
+
+        venv_path = os.getenv("AGENT_SANDBOX_VENV", DEFAULT_SANDBOX_VENV)
+        quoted_venv = shlex.quote(venv_path)
+        command = (
+            f"if [ ! -x {quoted_venv}/bin/python ] || ! {quoted_venv}/bin/python -c 'import requests, httpx' >/dev/null 2>&1; then "
+            f"rm -rf {quoted_venv} && "
+            f"python -m venv --system-site-packages {quoted_venv} && "
+            f"{quoted_venv}/bin/python -m pip install --upgrade --progress-bar off pip setuptools wheel httpx requests; "
+            "fi && "
+            f"{quoted_venv}/bin/python -c 'import requests, httpx'"
+        )
+        args = [
+            "docker",
+            "exec",
+            "-w",
+            os.getenv("AGENT_SANDBOX_WORKDIR", "/workspace/work"),
+            self.container_name,
+            "/bin/sh",
+            "-lc",
+            command,
+        ]
+
+        try:
+            process = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=max(self.limits.timeout_seconds, int(os.getenv("AGENT_SANDBOX_VENV_TIMEOUT", "120"))),
+            )
+        except FileNotFoundError as e:
+            raise SandboxError("Docker CLI command not found. Please make sure Docker is installed and in your PATH.") from e
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise SandboxError(f"Failed to prepare sandbox Python virtualenv: {e}") from e
+
+        if process.returncode != 0:
+            details = (process.stderr or process.stdout or "").strip()
+            raise SandboxError(f"Failed to prepare sandbox Python virtualenv (code {process.returncode}): {details}")
+
     def ensure_container(self) -> None:
+        if self._running_cache_valid():
+            return
+
         try:
             status = inspect_container_running(self.container_name)
         except SandboxError:
@@ -181,8 +241,10 @@ class DockerSandboxRuntime:
                     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
                     running_mounts = metadata.get("shared_mounts", [])
                     running_image = metadata.get("image", "")
+                    running_environment = metadata.get("environment_fingerprint", "")
                     if (running_mounts != self.shared_mounts or 
-                        running_image != self.image):
+                        running_image != self.image or
+                        running_environment != self._environment_fingerprint()):
                         config_match = False
                 except Exception:
                     config_match = False
@@ -209,12 +271,34 @@ class DockerSandboxRuntime:
         self._start_container()
         self._write_metadata("running")
 
+    def _running_cache_key(self) -> str:
+        mounts = json.dumps(self.shared_mounts, ensure_ascii=False, sort_keys=True)
+        return f"{self.session_id}|{self.image}|{mounts}|{self._environment_fingerprint()}"
+
+    def _running_cache_valid(self) -> bool:
+        if _RUNNING_CONTAINER_CACHE_TTL_SECONDS <= 0:
+            return False
+        expires_at = _RUNNING_CONTAINER_CACHE.get(self._running_cache_key())
+        return bool(expires_at and expires_at > time.monotonic())
+
+    def _mark_running_cache(self) -> None:
+        if _RUNNING_CONTAINER_CACHE_TTL_SECONDS <= 0:
+            return
+        _RUNNING_CONTAINER_CACHE[self._running_cache_key()] = time.monotonic() + _RUNNING_CONTAINER_CACHE_TTL_SECONDS
+
+    def _clear_running_cache(self) -> None:
+        prefix = f"{self.session_id}|"
+        for key in list(_RUNNING_CONTAINER_CACHE):
+            if key.startswith(prefix):
+                _RUNNING_CONTAINER_CACHE.pop(key, None)
+
     def status(self) -> dict[str, Any]:
         metadata = get_sandbox_world_state(self.session_id)
         return metadata or {"mode": "docker", "status": "disabled"}
 
     def stop(self) -> dict[str, str]:
         subprocess.run(["docker", "stop", self.container_name], capture_output=True, text=True, timeout=15)
+        self._clear_running_cache()
         self._write_metadata("stopped")
         return self.status()
 
@@ -245,9 +329,17 @@ class DockerSandboxRuntime:
             "/workspace/shared:rw,nosuid,nodev,size=1m",
         ]
         args.extend(docker_run_proxy_env_args())
+        
+        tool_results_path = get_session_dir(self.session_id) / "tool_results.json"
+        if not tool_results_path.exists():
+            tool_results_path.write_text("[]", encoding="utf-8")
+
+        args.extend(self._environment_args())
         args.extend([
             "-v",
             f"{self.work_dir}:/workspace/work:rw",
+            "-v",
+            f"{tool_results_path}:/workspace/tool_results.json:ro",
             *self._shared_mount_args(),
             "-w",
             os.getenv("AGENT_SANDBOX_WORKDIR", "/workspace/work"),
@@ -281,8 +373,13 @@ class DockerSandboxRuntime:
             "image": self.image,
             "work_dir": str(self.work_dir),
             "shared_mounts": self.shared_mounts,
+            "environment_fingerprint": self._environment_fingerprint(),
         }
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        if status == "running":
+            self._mark_running_cache()
+        else:
+            self._clear_running_cache()
 
     @staticmethod
     def _container_name(session_id: str) -> str:
@@ -303,6 +400,31 @@ class DockerSandboxRuntime:
             mode = mount.get("mode", "ro")
             args.extend(["-v", f"{mount['host_path']}:{mount['container_path']}:{mode}"])
         return args
+
+    def _environment_args(self) -> list[str]:
+        args: list[str] = []
+        for name, value in self._environment_items():
+            args.extend(["-e", f"{name}={value}"])
+        return args
+
+    def _environment_fingerprint(self) -> str:
+        encoded = "\n".join(f"{name}={value}" for name, value in self._environment_items())
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _environment_items(self) -> list[tuple[str, str]]:
+        allowed = set(SANDBOX_ENV_ALLOWLIST)
+        extra = os.getenv("AGENT_SANDBOX_ENV", "")
+        for name in extra.split(","):
+            cleaned = name.strip()
+            if cleaned:
+                allowed.add(cleaned)
+
+        items: list[tuple[str, str]] = []
+        for name in sorted(allowed):
+            value = os.getenv(name)
+            if value:
+                items.append((name, value))
+        return items
 
 
 def shared_mounts_path(session_id: str) -> Path:
@@ -412,7 +534,6 @@ def stop_session_sandbox() -> dict[str, Any]:
 
 def get_session_sandbox_status() -> dict[str, Any]:
     runtime = DockerSandboxRuntime()
-    runtime.ensure_container()
     return runtime.status()
 
 

@@ -6,32 +6,85 @@ from app.logging_config import logger
 from app.llm_logging import log_llm_request, log_llm_response
 from app.memory.store import trim_messages
 from app.nodes.common import format_todo_context, get_system_prompt
-from app.tools.registry import AGENT_TOOLS
+from app.tools.registry import get_agent_tools
 
 
-async def agent_reasoning_node(state: AgentState, config: RunnableConfig):
-    logger.info("🧠 \033[92m[Node: Agent Brain]\033[0m 正在分析请求...")
-    context_tags = state.get("context_tags")
+def _recent_text_for_tool_selection(messages: list, limit: int = 6) -> str:
+    parts: list[str] = []
+    for message in messages[-limit:]:
+        parts.append(str(getattr(message, "content", "")))
+        tool_calls = getattr(message, "tool_calls", None)
+        if tool_calls:
+            parts.append(str(tool_calls))
+    return "\n".join(parts)
+
+
+async def _run_agent_node(
+    state: AgentState,
+    config: RunnableConfig,
+    *,
+    prompt_key: str,
+    node_name: str,
+    log_label: str,
+    context_tags: list[str] | str | None = None,
+    agent_role: str = "general",
+):
+    logger.info(f"🧠 \033[92m[Node: {log_label}]\033[0m 正在分析请求...")
+    selected_context_tags = context_tags if context_tags is not None else state.get("context_tags")
     system_prompt = (
-        f"{get_system_prompt('agent_brain', context_tags=context_tags)}\n\n"
+        f"{get_system_prompt(prompt_key, context_tags=selected_context_tags)}\n\n"
         f"【Orchestrator 任务计划】\n{format_todo_context(state)}"
     )
     session_id = state.get("session_id")
-    messages = [SystemMessage(content=system_prompt)] + trim_messages(state["messages"], session_id=session_id)
-    log_llm_request("agent", messages)
+    trimmed_history = trim_messages(state["messages"], session_id=session_id)
+    messages = [SystemMessage(content=system_prompt)] + trimmed_history
+    agent_tools = get_agent_tools(
+        agent_role=agent_role,
+        context_tags=selected_context_tags,
+        recent_text=_recent_text_for_tool_selection(trimmed_history),
+    )
+    log_llm_request(node_name, messages)
 
     session = None
     if session_id:
         from app.web import manager
         session = manager.sessions.get(session_id)
         if session:
-            await session.set_llm_active("agent")
+            await session.set_llm_active(node_name)
 
     try:
-        response = await get_llm_client_from_config(config).bind_tools(AGENT_TOOLS).ainvoke(messages, config)
+        response = await (
+            get_llm_client_from_config(config)
+            .bind_tools(agent_tools)
+            .ainvoke(messages, config)
+        )
     finally:
         if session:
             await session.set_llm_active(None)
 
-    log_llm_response("agent", response)
-    return {"messages": [response], "last_node": "agent"}
+    log_llm_response(node_name, response)
+    return {"messages": [response], "last_node": node_name}
+
+
+async def agent_reasoning_node(state: AgentState, config: RunnableConfig):
+    return await _run_agent_node(
+        state,
+        config,
+        prompt_key="agent_brain",
+        node_name="agent",
+        log_label="Agent Brain",
+        agent_role="general",
+    )
+
+
+async def network_specialist_agent_node(state: AgentState, config: RunnableConfig):
+    context_tags = ["network", *[tag for tag in state.get("context_tags", []) if tag != "network"]]
+    return await _run_agent_node(
+        state,
+        config,
+        prompt_key="network_specialist_agent",
+        node_name="network_specialist_agent",
+        log_label="Network Specialist Agent",
+        context_tags=context_tags,
+        agent_role="network",
+    )

@@ -5,7 +5,21 @@ from app.runtime_paths import get_session_file_path
 from app.tools.context import ensure_session_id
 
 
+
+class StructuredToolResult:
+    """
+    A mechanism for tools to return BOTH a short instructional message to the agent
+    AND a large structured payload that is archived in the background.
+    
+    If `{{REF_ID}}` is present in `agent_message`, it will be replaced by the generated ref_id.
+    """
+    def __init__(self, agent_message: str, raw_output: str, metadata: dict | None = None):
+        self.agent_message = agent_message
+        self.raw_output = raw_output
+        self.metadata = metadata
+
 def store_tool_result_for_current_session(tool_name: str, raw_output: str, metadata: dict | None = None) -> str:
+
     return store_tool_result(
         tool_name,
         raw_output,
@@ -35,13 +49,19 @@ def read_tool_result_for_current_session(ref_id: str, offset: int = 0, limit: in
     if not cleaned_ref:
         raise ValueError("ref_id is required")
     safe_offset = max(0, int(offset))
-    safe_limit = max(1, min(int(limit), 20000))
+    if limit is None or int(limit) <= 0:
+        safe_limit = None
+    else:
+        safe_limit = int(limit)
 
     for record in _read_current_tool_records():
         if record.get("id") != cleaned_ref:
             continue
         content = str(record.get("content", ""))
-        chunk = content[safe_offset : safe_offset + safe_limit]
+        if safe_limit is None:
+            chunk = content[safe_offset:]
+        else:
+            chunk = content[safe_offset : safe_offset + safe_limit]
         next_offset = safe_offset + len(chunk)
         return {
             "id": record.get("id", ""),
@@ -60,7 +80,47 @@ def read_tool_result_for_current_session(ref_id: str, offset: int = 0, limit: in
 
 
 def _read_current_tool_records() -> list[dict[str, Any]]:
-    path = get_session_file_path(ensure_session_id(), "tool_results.json")
+    session_id = ensure_session_id()
+    records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for record in _read_jsonl_records(get_session_file_path(session_id, "tool_results.jsonl")):
+        record_id = str(record.get("id", ""))
+        if record_id in seen_ids:
+            continue
+        seen_ids.add(record_id)
+        records.append(record)
+
+    for record in _read_legacy_json_records(get_session_file_path(session_id, "tool_results.json")):
+        record_id = str(record.get("id", ""))
+        if record_id in seen_ids:
+            continue
+        seen_ids.add(record_id)
+        records.append(record)
+
+    return records
+
+
+def _read_jsonl_records(path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    try:
+        import json
+
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if isinstance(record, dict):
+                records.append(record)
+    except Exception:
+        return []
+    return records
+
+
+def _read_legacy_json_records(path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
@@ -69,4 +129,4 @@ def _read_current_tool_records() -> list[dict[str, Any]]:
         records = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return []
-    return records if isinstance(records, list) else []
+    return [record for record in records if isinstance(record, dict)] if isinstance(records, list) else []

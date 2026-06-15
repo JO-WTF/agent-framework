@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<body>
+<div id="test"></div>
+<script>
+  let inner = `<div class="chat-widget" data-widget='{"a":1}'>Hello</div>`;
+  let node = document.getElementById("test");
+  
+  node.innerHTML = inner;
+  let w = node.querySelector(".chat-widget");
+  w.dataset.hydrated = "true";
+  
+  let existingWidgets = new Map();
+  node.querySelectorAll(".chat-widget").forEach(el => {
+    if (el.dataset.hydrated) {
+      existingWidgets.set(el.dataset.widget, el);
+    }
+  });
+  
+  console.log("existing keys:", Array.from(existingWidgets.keys()));
+  
+  node.innerHTML = inner; // replace HTML
+  
+  node.querySelectorAll(".chat-widget").forEach(newW => {
+    console.log("new key:", newW.dataset.widget);
+    let saved = existingWidgets.get(newW.dataset.widget);
+    if (saved) {
+      console.log("Found saved! Swapping.");
+      newW.parentNode.replaceChild(saved, newW);
+    } else {
+      console.log("Not found!");
+    }
+  });
+</script>
+</body>
+</html>

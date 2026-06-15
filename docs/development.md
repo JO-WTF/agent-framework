@@ -63,7 +63,11 @@ TAVILY_API_KEY=...
 | `LLM_TEMPERATURE` | 温度，默认 `0.1`。 |
 | `TAVILY_API_KEY` | Tavily 搜索 API key。 |
 | `MAX_CONTEXT_SIZE_KB` | 最大上下文序列化大小，默认 512。 |
-| `AGENT_SANDBOX_IMAGE` | Docker 沙箱镜像，默认 `jupyter/scipy-notebook:latest`。 |
+| `AGENT_SANDBOX_IMAGE` | Docker 沙箱镜像，默认 `agent-framework-sandbox:latest`，由仓库内 `Dockerfile.sandbox` 构建。 |
+| `AGENT_SANDBOX_BUILD` | 标准沙箱镜像缺失时是否自动构建，默认 `1`。设置为 `0` 后只检查/拉取镜像。 |
+| `AGENT_SANDBOX_ENV` | 额外注入到沙箱容器的环境变量名，多个变量用逗号分隔。内置注入 Mapbox、HERE、Tavily、LLM 和 SSL 相关变量。 |
+| `AGENT_SANDBOX_AUTO_VENV` | 是否在首次执行前自动创建 `/workspace/work/venv` 并默认激活，默认 `1`。该 venv 使用 `--system-site-packages` 继承标准镜像依赖。 |
+| `AGENT_SANDBOX_VENV` | 自动虚拟环境路径，默认 `/workspace/work/venv`。 |
 | `AGENT_SANDBOX_CPUS` | Docker 沙箱 CPU 限制，默认 `2`。 |
 | `AGENT_SANDBOX_MEMORY` | Docker 沙箱内存限制，默认 `2g`。 |
 | `AGENT_SANDBOX_TIMEOUT` | Docker 沙箱超时秒数，默认 `30`。 |
@@ -74,10 +78,15 @@ TAVILY_API_KEY=...
 
 第一阶段沙箱通过 Docker 提供轻量隔离。它是会话级、懒启动的：
 
+- 启动脚本会先运行 `python -m app.setup_auto`，默认构建/复用 `agent-framework-sandbox:latest`。
+- 标准镜像来自 `Dockerfile.sandbox`，包含常用 CA 证书、`requests`/`httpx`、网页正文提取、数据处理、地理/地图和可视化依赖。
 - 每个会话创建一个共享可写目录，挂载到 `/workspace/work`。
 - 第一次 `run_command` 或 `run_python` 需要执行时才启动容器。
 - 同一会话后续工具调用通过 `docker exec` 进入同一个容器。
+- 首次执行命令或 Python 代码前会自动创建 `/workspace/work/venv`；该 venv 继承标准镜像依赖，额外安装的包写入可写工作目录；`run_command` 默认激活该 venv，`run_python` 默认使用该 venv 的 Python。
 - 容器默认开启网络，便于访问公网资源。
+- 容器会注入允许列表中的环境变量，例如 `MAPBOX_ACCESS_TOKEN`、`MAPBOX_API_KEY`、`HERE_API_KEY`、`TAVILY_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`LLM_API_KEY`、`LLM_BASE_URL`、`REQUESTS_CA_BUNDLE`、`SSL_CERT_FILE`。需要额外变量时设置 `AGENT_SANDBOX_ENV=VAR_A,VAR_B`。
+- 环境变量变化会触发当前会话容器重建；metadata 只保存环境指纹，不保存明文 token。
 - 容器使用非 root 用户、只读根文件系统、`/tmp` tmpfs、CPU/内存/pids/超时限制。
 - 可写目录保存在 `.data/sessions/{session_id}/sandbox_work/shared/`，便于宿主侧和其他节点查看产物。
 - 容器信息写入 `.data/sessions/{session_id}/sandbox.json`。
@@ -108,7 +117,9 @@ Agent 可用的沙箱控制工具：
 启用方式：
 
 ```bash
-AGENT_SANDBOX_IMAGE=jupyter/scipy-notebook:latest
+AGENT_SANDBOX_IMAGE=agent-framework-sandbox:latest
+AGENT_SANDBOX_BUILD=1
+MAPBOX_ACCESS_TOKEN=...
 ```
 
 Windows 原生 PowerShell 示例：

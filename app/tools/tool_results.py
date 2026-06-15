@@ -5,7 +5,7 @@ from langchain_core.runnables.config import RunnableConfig
 
 from app.config import PROMPTS
 from app.tools.context import get_session_id_from_config_or_context
-from app.tools.storage import list_tool_results_for_current_session, read_tool_result_for_current_session
+from app.tools.storage import list_tool_results_for_current_session, read_tool_result_for_current_session, store_tool_result_for_current_session
 
 
 @tool(description=PROMPTS["tools"]["list_tool_results"])
@@ -19,6 +19,7 @@ async def list_tool_results(limit: int = 10, config: RunnableConfig = None) -> s
 
 @tool(description=PROMPTS["tools"]["read_tool_result"])
 async def read_tool_result(ref_id: str, offset: int = 0, limit: int = 8000, config: RunnableConfig = None) -> str:
+    limit = min(max(1, limit), 20000)
     get_session_id_from_config_or_context(config)
     try:
         result = read_tool_result_for_current_session(ref_id=ref_id, offset=offset, limit=limit)
@@ -32,4 +33,26 @@ async def read_tool_result(ref_id: str, offset: int = 0, limit: int = 8000, conf
     )
     if result["has_more"]:
         header += f" next_offset={result['next_offset']}"
+    if result["offset"] >= result["content_length"]:
+        return f"{header}\n\n已到达工具结果末尾，没有更多内容。"
     return f"{header}\n\n{result['content']}"
+
+
+@tool(description=PROMPTS["tools"]["store_data"])
+async def store_data(data: str | dict | list, description: str, config: RunnableConfig = None) -> str:
+    get_session_id_from_config_or_context(config)
+    
+    if not isinstance(data, str):
+        content = json.dumps(data, ensure_ascii=False)
+    else:
+        content = data
+        
+    try:
+        ref_id = store_tool_result_for_current_session(
+            tool_name="store_data",
+            raw_output=content,
+            metadata={"description": description}
+        )
+        return f"数据已成功归档。后续请使用 {{{{ref:{ref_id}}}}} 来引用此数据。"
+    except Exception as e:
+        return f"数据归档失败: {str(e)}"

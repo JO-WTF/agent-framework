@@ -1,0 +1,44 @@
+import unittest
+
+from app.config import PROMPTS
+from app.tools.registry import AGENT_TOOLS, get_agent_tools
+
+
+class ToolDescriptionTests(unittest.TestCase):
+    def test_registered_tools_have_prompt_descriptions(self):
+        prompt_descriptions = PROMPTS.get("tools", {})
+
+        for tool in AGENT_TOOLS:
+            self.assertIn(tool.name, prompt_descriptions)
+            self.assertTrue(prompt_descriptions[tool.name].strip(), tool.name)
+            self.assertEqual(tool.description.strip(), prompt_descriptions[tool.name].strip())
+
+    def test_agent_tool_selection_keeps_general_context_smaller_than_full_registry(self):
+        tool_names = {tool.name for tool in get_agent_tools("general", ["general"], recent_text="普通问题")}
+
+        self.assertIn("search_web", tool_names)
+        self.assertIn("fetch_url", tool_names)
+        self.assertIn("read_webpage", tool_names)
+        self.assertIn("api_request", tool_names)
+        self.assertIn("run_python", tool_names)
+        self.assertIn("run_command", tool_names)
+        self.assertIn("render_map_card", tool_names)
+        self.assertNotIn("start_sandbox", tool_names)
+        self.assertNotIn("save_skill_sop", tool_names)
+
+    def test_agent_tool_selection_adds_sandbox_tools_for_file_work(self):
+        tool_names = {tool.name for tool in get_agent_tools("general", ["file_system"], recent_text="需要写回 repo://demo.txt")}
+
+        self.assertIn("add_shared_mount", tool_names)
+        self.assertIn("apply_sandbox_file", tool_names)
+        self.assertIn("sandbox_status", tool_names)
+
+    def test_agent_tool_selection_adds_skill_tools_by_keyword(self):
+        tool_names = {tool.name for tool in get_agent_tools("general", ["general"], recent_text="请把这个流程保存成技能 SOP")}
+
+        self.assertIn("save_skill_sop", tool_names)
+        self.assertIn("list_skills", tool_names)
+
+
+if __name__ == "__main__":
+    unittest.main()

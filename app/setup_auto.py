@@ -13,7 +13,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOGS_DIR = PROJECT_ROOT / "logs"
 STEPS_DIR = LOGS_DIR / "setup-steps"
 PROGRESS_LOG = LOGS_DIR / "setup.log"
-DEFAULT_IMAGE = "jupyter/scipy-notebook:latest"
+DEFAULT_IMAGE = "agent-framework-sandbox:latest"
+STANDARD_SANDBOX_DOCKERFILE = PROJECT_ROOT / "Dockerfile.sandbox"
 DEFAULT_DOCKER_WAIT_SECONDS = 180
 
 
@@ -147,12 +148,29 @@ def wait_for_docker_daemon(platform_info: dict[str, object]) -> bool:
 
 
 def ensure_image() -> bool:
-    image = os.getenv("AGENT_SANDBOX_IMAGE", DEFAULT_IMAGE)
+    image = os.getenv("AGENT_SANDBOX_IMAGE") or DEFAULT_IMAGE
     start = time.time()
     raw_log = STEPS_DIR / "03-image.log"
     inspect = run_logged(["docker", "image", "inspect", image], raw_log)
     if inspect.returncode == 0:
         write_progress("image", "success", start, {"image": image, "raw": relative(raw_log)})
+        print(f"Sandbox image ready: {image}")
+        return True
+
+    if should_build_standard_sandbox_image(image):
+        if not prompt_yes_no(f"Standard sandbox image {image} is missing. Build it from Dockerfile.sandbox now?", default=True):
+            write_progress("image", "missing", start, {"image": image, "raw": relative(raw_log)})
+            return False
+        build = run_logged(
+            ["docker", "build", "-f", str(STANDARD_SANDBOX_DOCKERFILE), "-t", image, "."],
+            raw_log,
+            append=True,
+        )
+        status = "success" if build.returncode == 0 else "failed"
+        write_progress("image", status, start, {"image": image, "dockerfile": relative(STANDARD_SANDBOX_DOCKERFILE), "raw": relative(raw_log)})
+        if build.returncode != 0:
+            print(f"Failed to build {image}. See {relative(raw_log)}")
+            return False
         print(f"Sandbox image ready: {image}")
         return True
 
@@ -168,6 +186,14 @@ def ensure_image() -> bool:
         return False
     print(f"Sandbox image ready: {image}")
     return True
+
+
+def should_build_standard_sandbox_image(image: str) -> bool:
+    if os.getenv("AGENT_SANDBOX_BUILD", "1").strip().lower() in {"0", "false", "no", "n"}:
+        return False
+    if not STANDARD_SANDBOX_DOCKERFILE.exists():
+        return False
+    return image == DEFAULT_IMAGE or os.getenv("AGENT_SANDBOX_BUILD", "").strip().lower() in {"1", "true", "yes", "y"}
 
 
 def should_install_docker(platform_info: dict[str, object]) -> bool:

@@ -6,6 +6,12 @@ from typing import Any
 from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
 
 from app.config import AgentState
+from app.memory.proposals import (
+    AGENT_CONTRACTS,
+    build_task_ledger,
+    derive_memory_proposals_from_state,
+    route_memory_proposals,
+)
 from app.memory.store import archive_messages, context_size_bytes, make_json_safe_for_storage, summarize_text
 from app.runtime_paths import ROOT_DIR
 from app.tools.approvals import list_pending_approvals
@@ -57,12 +63,25 @@ def build_world_state(state: AgentState) -> dict[str, Any]:
     """Build a compact world-state board from confirmed structured graph state."""
     previous = dict(state.get("world_state", {}) or {})
     messages = state.get("messages", [])
+    task_ledger = build_task_ledger(state, previous.get("task_ledger"))
+    raw_proposals = [
+        *derive_memory_proposals_from_state(state),
+        *(state.get("memory_proposals") or []),
+    ]
+    routed_memory = route_memory_proposals(
+        raw_proposals,
+        previous.get("memory"),
+        default_source=state.get("last_node", "memory_manager") or "memory_manager",
+    )
 
     world_state = {
         **previous,
         "task_complexity": state.get("task_complexity", previous.get("task_complexity", "unknown")),
         "context_tags": state.get("context_tags", previous.get("context_tags", ["general"])),
         "todo_list": state.get("todo_list", previous.get("todo_list", [])),
+        "task_ledger": task_ledger,
+        "agent_contracts": AGENT_CONTRACTS,
+        "memory": routed_memory,
         "runtime_environment": build_runtime_environment(),
         "updated_at": datetime.now().isoformat(),
     }
@@ -133,6 +152,9 @@ def enqueue_archive(messages: list[Any], session_id: str | None) -> None:
 
 async def memory_manager_node(state: AgentState) -> dict[str, Any]:
     """Persist confirmed facts into world_state and prune redundant history early."""
+    if state.get("last_node") == "tools":
+        return {}
+
     world_state = build_world_state(state)
     updates: dict[str, Any] = {"world_state": world_state}
 
@@ -151,26 +173,28 @@ async def memory_manager_node(state: AgentState) -> dict[str, Any]:
     return updates
 
 
+def _route_to_selected_agent(state: AgentState) -> str:
+    return "network_specialist_agent" if state.get("agent_role") == "network" else "agent"
+
+
 def route_after_memory(state: AgentState) -> str:
     """Route after memory consolidation, using the node that produced the latest update."""
     last_message = state["messages"][-1]
     origin = state.get("last_node", "")
 
-    if origin == "agent":
+    if origin in {"agent", "network_specialist_agent"}:
         if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
             return "tools"
         return "orchestrator"
 
     if origin == "tools":
-        return "orchestrator"
+        return _route_to_selected_agent(state)
 
     if origin == "orchestrator":
-        if state.get("orchestrator_next") == "evaluate" and isinstance(last_message, AIMessage):
-            return "evaluate"
-        return "agent"
+        return _route_to_selected_agent(state)
 
     if isinstance(last_message, AIMessage) and getattr(last_message, "tool_calls", None):
         return "tools"
     if isinstance(last_message, ToolMessage):
         return "orchestrator"
-    return "agent"
+    return _route_to_selected_agent(state)

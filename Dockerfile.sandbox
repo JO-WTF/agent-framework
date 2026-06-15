@@ -1,19 +1,53 @@
 FROM python:3.12-slim
 
-# Install system utilities and build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    wget \
+    ca-certificates \
     git \
+    wget \
     build-essential \
+    pkg-config \
+    libxml2-dev \
+    libxslt1-dev \
+    libjpeg62-turbo-dev \
+    zlib1g-dev \
+    libffi-dev \
+    libssl-dev \
+    tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Install commonly used python libraries for data science, web scraping, and automation
-RUN pip install --no-cache-dir \
-    requests \
-    httpx \
-    beautifulsoup4 \
-    numpy \
-    pandas \
-    openpyxl \
-    pillow
+ENV PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HOME=/workspace/work \
+    MPLCONFIGDIR=/tmp/matplotlib \
+    XDG_CACHE_HOME=/tmp/cache \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+RUN python -m pip install --upgrade pip setuptools wheel certifi && \
+    python -m pip install \
+      requests \
+      requests-toolbelt \
+      httpx \
+      beautifulsoup4 \
+      lxml \
+      trafilatura \
+      numpy \
+      pandas \
+      scipy \
+      scikit-learn \
+      matplotlib \
+      plotly \
+      openpyxl \
+      pillow \
+      pyarrow \
+      yfinance \
+      geopy \
+      shapely \
+      folium \
+      mapbox \
+      python-dotenv \
+      pyyaml
+
+WORKDIR /workspace/work
+ENTRYPOINT ["/usr/bin/tini", "--"]

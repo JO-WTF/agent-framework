@@ -4,16 +4,47 @@
 
 set -euo pipefail
 
+if [[ -t 1 ]]; then
+  C_RESET="$(printf '\033[0m')"
+  C_BOLD="$(printf '\033[1m')"
+  C_BLUE="$(printf '\033[34m')"
+  C_CYAN="$(printf '\033[36m')"
+  C_GREEN="$(printf '\033[32m')"
+  C_MAGENTA="$(printf '\033[35m')"
+  C_RED="$(printf '\033[31m')"
+  C_YELLOW="$(printf '\033[33m')"
+else
+  C_RESET=""
+  C_BOLD=""
+  C_BLUE=""
+  C_CYAN=""
+  C_GREEN=""
+  C_MAGENTA=""
+  C_RED=""
+  C_YELLOW=""
+fi
+
+BOOTSTRAP_LOG_DIR="${BOOTSTRAP_LOG_DIR:-logs/setup}"
+BOOTSTRAP_LOG_FILE="${BOOTSTRAP_LOG_FILE:-$BOOTSTRAP_LOG_DIR/bootstrap-$(date +%Y%m%d-%H%M%S).log}"
+
 log() {
-  printf '[bootstrap] %s\n' "$*"
+  printf '%s[bootstrap]%s %s\n' "$C_CYAN" "$C_RESET" "$*"
+}
+
+step() {
+  printf '%s▶%s %s%s%s\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$*" "$C_RESET"
+}
+
+success() {
+  printf '%s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"
 }
 
 warn() {
-  printf '[bootstrap] warning: %s\n' "$*" >&2
+  printf '%s[bootstrap] warning:%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2
 }
 
 fail() {
-  printf '[bootstrap] error: %s\n' "$*" >&2
+  printf '%s[bootstrap] error:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2
   exit 1
 }
 
@@ -29,6 +60,60 @@ run_sudo() {
   else
     fail "'$*' requires root privileges, but sudo is not installed. Re-run as root or install sudo."
   fi
+}
+
+progress_bar() {
+  local label="$1"
+  local pid="$2"
+  local frames=("▱▱▱▱▱▱▱▱" "▰▱▱▱▱▱▱▱" "▰▰▱▱▱▱▱▱" "▰▰▰▱▱▱▱▱" "▰▰▰▰▱▱▱▱" "▰▰▰▰▰▱▱▱" "▰▰▰▰▰▰▱▱" "▰▰▰▰▰▰▰▱" "▰▰▰▰▰▰▰▰")
+  local idx=0
+
+  if [[ ! -t 1 ]]; then
+    printf '%s ...\n' "$label"
+    while kill -0 "$pid" >/dev/null 2>&1; do
+      sleep 1
+    done
+    return 0
+  fi
+
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    printf '\r%s%s%s %s %s' "$C_MAGENTA" "${frames[$idx]}" "$C_RESET" "$label" "working"
+    idx=$(((idx + 1) % ${#frames[@]}))
+    sleep 0.18
+  done
+  printf '\r\033[K'
+}
+
+run_logged_progress() {
+  local label="$1"
+  shift
+  mkdir -p "$BOOTSTRAP_LOG_DIR"
+  step "$label"
+  {
+    printf '\n===== %s =====\n' "$label"
+    printf 'Command:'
+    printf ' %q' "$@"
+    printf '\nStarted: %s\n\n' "$(date -Iseconds)"
+  } >>"$BOOTSTRAP_LOG_FILE"
+
+  set +e
+  "$@" >>"$BOOTSTRAP_LOG_FILE" 2>&1 &
+  local pid=$!
+  progress_bar "$label" "$pid"
+  wait "$pid"
+  local status=$?
+  set -e
+
+  printf 'Finished: %s\nExit code: %s\n' "$(date -Iseconds)" "$status" >>"$BOOTSTRAP_LOG_FILE"
+  if [[ "$status" -ne 0 ]]; then
+    warn "$label failed. Full log: $BOOTSTRAP_LOG_FILE"
+    if have tail; then
+      printf '%sLast log lines:%s\n' "$C_YELLOW" "$C_RESET" >&2
+      tail -n 40 "$BOOTSTRAP_LOG_FILE" >&2 || true
+    fi
+    return "$status"
+  fi
+  success "$label"
 }
 
 ensure_system_python() {
@@ -127,25 +212,27 @@ create_or_repair_venv() {
     return 0
   fi
 
-  log "Creating .venv with $py."
-  if ! "$py" -m venv .venv; then
+  if ! run_logged_progress "Creating .venv with $py" "$py" -m venv .venv; then
     warn "Initial virtualenv creation failed; removing partial .venv and retrying once."
     rm -rf .venv
-    "$py" -m venv .venv
+    run_logged_progress "Creating .venv with $py (retry)" "$py" -m venv .venv
   fi
 }
 
 install_python_deps() {
   local venv_python="$1"
-  log "Installing/updating Python packaging tools."
-  "$venv_python" -m ensurepip --upgrade >/dev/null 2>&1 || true
-  "$venv_python" -m pip install --upgrade pip setuptools wheel
+  mkdir -p "$BOOTSTRAP_LOG_DIR"
+  log "Setup log: $BOOTSTRAP_LOG_FILE"
+  step "Preparing Python packaging tools"
+  "$venv_python" -m ensurepip --upgrade >>"$BOOTSTRAP_LOG_FILE" 2>&1 || true
+  run_logged_progress "Updating pip, setuptools and wheel" "$venv_python" -m pip install --upgrade --progress-bar off pip setuptools wheel
 
-  log "Installing project Python dependencies from requirements.txt."
-  "$venv_python" -m pip install -r requirements.txt
+  run_logged_progress "Installing project dependencies from requirements.txt" "$venv_python" -m pip install --progress-bar off -r requirements.txt
 }
 
 bootstrap_python_env() {
+  mkdir -p "$BOOTSTRAP_LOG_DIR"
+  log "Setup log: $BOOTSTRAP_LOG_FILE"
   ensure_system_python
   local py
   py="$(python_bin)"

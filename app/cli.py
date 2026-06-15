@@ -9,6 +9,7 @@ from app.config import AgentState, StreamingConsoleCallback
 from app.memory.store import trim_messages
 from app.nodes import (
     agent_reasoning_node,
+    network_specialist_agent_node,
     evaluate_response_node,
     memory_manager_node,
     orchestrator_node,
@@ -19,6 +20,13 @@ from app.logging_config import logger
 from app.llm_logging import log_user_question
 
 # ----------------- 路由裁判逻辑 -----------------
+def route_after_orchestrator(state: AgentState) -> str:
+    """Let final replies go straight to evaluation without another memory pass."""
+    if state.get("orchestrator_next") == "evaluate":
+        return "evaluate"
+    return "memory"
+
+
 def route_after_evaluation(state: AgentState) -> str:
     """质检完去哪儿？通过就结束，不通过就回大脑"""
     if state["eval_status"] == "PASS":
@@ -30,18 +38,25 @@ def build_agent_graph():
     workflow = StateGraph(AgentState)
     workflow.add_node("orchestrator", orchestrator_node)
     workflow.add_node("agent", agent_reasoning_node)
+    workflow.add_node("network_specialist_agent", network_specialist_agent_node)
     workflow.add_node("tools", tools_execution_node)
     workflow.add_node("memory", memory_manager_node)
     workflow.add_node("evaluate", evaluate_response_node)
 
     workflow.add_edge(START, "orchestrator")
-    workflow.add_edge("orchestrator", "memory")
+    workflow.add_conditional_edges("orchestrator", route_after_orchestrator, {"memory": "memory", "evaluate": "evaluate"})
     workflow.add_edge("agent", "memory")
+    workflow.add_edge("network_specialist_agent", "memory")
     workflow.add_edge("tools", "memory")
     workflow.add_conditional_edges(
         "memory",
         route_after_memory,
-        {"agent": "agent", "tools": "tools", "orchestrator": "orchestrator", "evaluate": "evaluate"},
+        {
+            "agent": "agent",
+            "network_specialist_agent": "network_specialist_agent",
+            "tools": "tools",
+            "orchestrator": "orchestrator",
+        },
     )
     workflow.add_conditional_edges("evaluate", route_after_evaluation, {"end": END, "orchestrator": "orchestrator"})
 

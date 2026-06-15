@@ -11,6 +11,7 @@ os.environ.setdefault("TAVILY_API_KEY", "dummy")
 from langchain_core.messages import HumanMessage
 
 from app.memory import store
+from app.agents.contracts import format_agent_contracts_for_orchestrator
 from app.nodes.common import get_system_prompt, infer_context_tags_from_state
 
 
@@ -58,6 +59,14 @@ class DynamicContextTests(unittest.TestCase):
 
         self.assertIn("file_system", tags)
         self.assertIn("tool_error", tags)
+
+    def test_orchestrator_agent_contracts_include_planning_boundaries(self):
+        contracts = format_agent_contracts_for_orchestrator()
+
+        self.assertIn('"network"', contracts)
+        self.assertIn("planning_boundaries", contracts)
+        self.assertIn("tool_categories", contracts)
+        self.assertIn("cannot", contracts)
 
 
 if __name__ == "__main__":

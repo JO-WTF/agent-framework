@@ -13,6 +13,7 @@ from app.llm_logging import log_llm_request, log_llm_response
 from app.logging_config import logger
 from app.tools.context import set_session_id
 from app.tools.registry import AGENT_TOOLS
+from app.tools.reference_resolver import resolve_tool_args
 
 
 class ToolExecutionState(TypedDict):
@@ -113,8 +114,6 @@ def get_max_retries(tool_name: str) -> int:
     """Return a conservative retry budget per tool."""
     if tool_name == "run_python":
         return 3
-    if tool_name == "search_web":
-        return 1
     if tool_name == "run_command":
         return 1
     return 0
@@ -300,8 +299,18 @@ async def execute_node(state: ToolExecutionState, config: RunnableConfig) -> dic
         }
 
     try:
-        result = await tool.ainvoke(args, config=config)
-        result_text = str(result)
+        from app.tools.storage import StructuredToolResult
+        from app.memory.store import store_tool_result
+        
+        resolved_args = resolve_tool_args(args)
+        result = await tool.ainvoke(resolved_args, config=config)
+        
+        if isinstance(result, StructuredToolResult):
+            ref_id = store_tool_result(tool_name, result.raw_output, session_id=session_id, metadata=result.metadata)
+            result_text = result.agent_message.replace("{{REF_ID}}", ref_id)
+        else:
+            result_text = str(result)
+            
         status, failure_reason = classify_tool_result(tool_name, result_text)
         required_action = (
             build_dependency_required_action(extract_missing_python_dependency(result_text))
@@ -391,7 +400,7 @@ async def fix_node(state: ToolExecutionState, config: RunnableConfig) -> dict[st
 
     try:
         log_llm_request("tool_fix_args", messages)
-        response = await llm_client.ainvoke(messages, config=config)
+        response = await llm_client.ainvoke(messages, config={**config, "callbacks": []})
         log_llm_response("tool_fix_args", response)
         response_text = str(getattr(response, "content", response))
         payload = _extract_json_object(response_text)

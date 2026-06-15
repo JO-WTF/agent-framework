@@ -18,7 +18,6 @@ const els = {
   messageInput: document.getElementById("messageInput"),
   sendBtn: document.getElementById("sendBtn"),
   messageList: document.getElementById("messageList"),
-  modelOutput: document.getElementById("modelOutput"),
   eventList: document.getElementById("eventList"),
   todoList: document.getElementById("todoList"),
   approvalList: document.getElementById("approvalList"),
@@ -27,6 +26,8 @@ const els = {
   progressResizeHandle: document.getElementById("progressResizeHandle"),
   complexityValue: document.getElementById("complexityValue"),
   currentNodeValue: document.getElementById("currentNodeValue"),
+  workspace: document.querySelector(".workspace"),
+  toggleRuntimeBtn: document.getElementById("toggleRuntimeBtn"),
 };
 
 const SESSION_STORAGE_KEY = "agent_session_id";
@@ -102,7 +103,8 @@ if (window.marked) {
     const lang = typeof tokenOrCode === "object" && tokenOrCode !== null ? tokenOrCode.lang : infostring;
     const language = String(lang || "").split(/\s+/)[0] || "text";
     const canHighlight = window.hljs && language !== "text" && hljs.getLanguage(language);
-    const highlighted = canHighlight
+    const skipHighlight = currentState && currentState.status === "running";
+    const highlighted = (canHighlight && !skipHighlight)
       ? hljs.highlight(String(text ?? ""), { language }).value
       : escapeHtml(text);
     return `
@@ -382,31 +384,55 @@ function renderModelOutput(content) {
 }
 
 
-function renderAssistantMarkdown(content) {
+function renderAssistantMarkdown(content, isIntermediate = false) {
   if (!window.marked || !window.DOMPurify) {
-    return escapeHtml(content);
+    if (isIntermediate) return { processingHtml: `<div class="process-item text-item">${escapeHtml(content)}</div>`, formalHtml: "" };
+    return { processingHtml: "", formalHtml: escapeHtml(content) };
   }
-  const { think, message } = parseThinkingContent(content);
-  let html = "";
-  if (think) {
-    html += `
-      <details class="chat-think-details" open>
-        <summary class="chat-think-summary">🧠 思考过程 (点击收起/展开)</summary>
-        <div class="chat-think-content">${escapeHtml(think)}</div>
-      </details>
-    `;
-  }
-  if (message) {
-    html += DOMPurify.sanitize(marked.parse(message), {
+  let processingHtml = "";
+  let formalHtml = "";
+  const blockRe = /<think>([\s\S]*?)<\/think>/gi;
+  let cursor = 0;
+  let match;
+
+  function renderText(text) {
+    return DOMPurify.sanitize(marked.parse(text), {
       USE_PROFILES: { html: true, mathMl: true },
       ADD_ATTR: ["class", "style", "xmlns"]
     });
-  } else if (!think) {
-    html += escapeHtml(content);
   }
-  return html;
-}
 
+  while ((match = blockRe.exec(content)) !== null) {
+    const textBefore = content.substring(cursor, match.index).trim();
+    if (textBefore) {
+      processingHtml += `<div class="process-item text-item">${renderText(textBefore)}</div>`;
+    }
+    const thinkContent = match[1].trim();
+    if (thinkContent) {
+      processingHtml += `<div class="process-item think-item">${escapeHtml(thinkContent)}</div>`;
+    }
+    cursor = blockRe.lastIndex;
+  }
+
+  const remainder = content.substring(cursor);
+  const openMatch = /<think>([\s\S]*)$/i.exec(remainder);
+  
+  if (openMatch) {
+    const textBefore = remainder.substring(0, openMatch.index).trim();
+    if (textBefore) {
+      processingHtml += `<div class="process-item text-item">${renderText(textBefore)}</div>`;
+    }
+    const thinkContent = openMatch[1].trim();
+    if (thinkContent) {
+      processingHtml += `<div class="process-item think-item">${escapeHtml(thinkContent)}</div>`;
+    }
+  } else if (remainder.trim()) {
+    if (isIntermediate) processingHtml += `<div class="process-item text-item">${renderText(remainder.trim())}</div>`;
+    else formalHtml += renderText(remainder.trim());
+  }
+
+  return { processingHtml, formalHtml };
+}
 
 function messageBlocks(message) {
   if (Array.isArray(message.blocks) && message.blocks.length) {
@@ -415,52 +441,315 @@ function messageBlocks(message) {
   return [{ type: "text", format: "markdown", content: String(message.content || "") }];
 }
 
-function renderAssistantBlocks(blocks) {
-  return blocks
-    .map((block) => {
-      if (block && block.type === "widget") {
-        const config = { widget_type: block.widget_type, id: block.id || "", props: block.props || {} };
-        return `<div class="chat-widget" data-widget="${escapeHtml(JSON.stringify(config))}"></div>`;
+function renderAssistantBlocks(blocks, isIntermediate = false) {
+  let processingHtml = "";
+  let formalHtml = "";
+  
+  for (const block of blocks) {
+    if (block && block.type === "widget") {
+      const config = { widget_type: block.widget_type, id: block.id || "", props: block.props || {} };
+      if (window.__webConfig?.mapbox_access_token) {
+        config.props.access_token = window.__webConfig.mapbox_access_token;
       }
+      const wHtml = `<div class="chat-widget" data-widget="${escapeHtml(JSON.stringify(config))}"></div>`;
+      if (isIntermediate) {
+        if (config.widget_type === "map") {
+          processingHtml += `<div class="process-item text-item" style="color: var(--text-secondary); font-size: 12px;">🗺️ 地图组件生成中...</div>`;
+        } else {
+          processingHtml += `<div class="process-item text-item" style="color: var(--text-secondary); font-size: 12px;">🧩 组件生成中...</div>`;
+        }
+      } else {
+        formalHtml += wHtml;
+      }
+    } else {
       const text = String((block && block.content) || "");
-      if (!text.trim()) return "";
-      return `<div class="message-block-text">${renderAssistantMarkdown(text)}</div>`;
-    })
-    .join("");
+      if (text.trim()) {
+        const res = renderAssistantMarkdown(text, isIntermediate);
+        if (res.processingHtml) processingHtml += res.processingHtml;
+        if (res.formalHtml) formalHtml += `<div class="message-block-text">${res.formalHtml}</div>`;
+      }
+    }
+  }
+  return { processingHtml, formalHtml };
+}
+
+
+function parseMessageBlocksJS(content) {
+  if (!content) return null;
+  const blocks = [];
+  const regex = /(`{3,}|~{3,})[ \t]*widget[ \t]*\r?\n([\s\S]*?)\n[ \t]*\1/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    const textBefore = content.substring(lastIndex, match.index);
+    if (textBefore.trim()) blocks.push({ type: "text", content: textBefore.trim() });
+    try {
+      const payload = JSON.parse(match[2].trim());
+      if (payload && payload.widget_type) {
+        blocks.push({ type: "widget", widget_type: payload.widget_type, id: payload.id || "", props: payload.props || {} });
+      } else {
+        blocks.push({ type: "text", content: match[0] });
+      }
+    } catch (e) {
+      blocks.push({ type: "text", content: match[0] });
+    }
+    lastIndex = regex.lastIndex;
+  }
+  const textAfter = content.substring(lastIndex);
+  if (textAfter.trim()) blocks.push({ type: "text", content: textAfter.trim() });
+  return blocks.some(b => b.type === "widget") ? blocks : null;
 }
 
 let lastMessagesSignature = null;
 
-function renderMessages(messages) {
-  const signature = JSON.stringify(
-    messages.map((m) => ({ role: m.role, blocks: m.blocks || null, content: m.content || "" }))
-  );
-  if (signature === lastMessagesSignature) {
-    return;
+
+
+
+function formatDuration(ms) {
+  if (!ms || ms < 0) return "0s";
+  let s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  let m = Math.floor(s / 60);
+  s = s % 60;
+  return `${m}m ${s}s`;
+}
+
+function renderMessages(messages, status, model_output) {
+  window.roundTimers = window.roundTimers || new Map();
+  
+  const displayMessages = [...messages];
+  if (status === "running") {
+    if (model_output) {
+      const combinedRound = model_output.replace(/\n*\[\[MODEL_OUTPUT_ROUND_BREAK\]\]\n*/g, "\n\n").trim();
+      if (combinedRound) {
+        const parsedBlocks = parseMessageBlocksJS(combinedRound);
+        if (parsedBlocks) {
+          displayMessages.push({ role: "assistant", content: combinedRound, blocks: parsedBlocks, __streaming: true });
+        } else {
+          displayMessages.push({ role: "assistant", content: combinedRound, __streaming: true });
+        }
+      }
+    }
   }
+
+  const signature = JSON.stringify(
+    displayMessages.map((m) => ({ role: m.role, blocks: m.blocks || null, content: m.content || "", tool_calls: m.tool_calls || [] }))
+  );
+  if (signature === lastMessagesSignature && status !== "running") return;
   lastMessagesSignature = signature;
 
-  if (!messages.length) {
+  const isAtBottom = els.messageList.scrollHeight - els.messageList.scrollTop - els.messageList.clientHeight <= 50;
+
+  if (!displayMessages.length) {
     els.messageList.innerHTML = `<div class="empty">暂无对话</div>`;
     return;
   }
 
-  els.messageList.innerHTML = messages
-    .map((message) => {
-      const role = escapeHtml(message.role || "assistant");
-      if (role === "assistant") {
-        return `<div class="message ${role}">${renderAssistantBlocks(messageBlocks(message))}</div>`;
-      }
-      return `<div class="message ${role}">${escapeHtml(String(message.content || ""))}</div>`;
-    })
-    .join("");
+  if (els.messageList.children.length === 1 && els.messageList.children[0].classList.contains("empty")) {
+    els.messageList.innerHTML = "";
+  }
 
-  hydrateWidgets(els.messageList);
-  els.messageList.scrollTop = els.messageList.scrollHeight;
+  const rounds = [];
+  let currentRound = null;
+  let processingText = "处理中";
+
+  for (let i = 0; i < displayMessages.length; i++) {
+    const msg = displayMessages[i];
+    if (msg.role === "user") {
+      if (currentRound) rounds.push(currentRound);
+      currentRound = { id: msg.id || `round-user-${i}`, userMsg: msg, assistantMsgs: [], isStreaming: false };
+    } else {
+      if (!currentRound) {
+        currentRound = { id: `round-initial`, userMsg: null, assistantMsgs: [], isStreaming: false };
+      }
+      currentRound.assistantMsgs.push(msg);
+      if (msg.__streaming) currentRound.isStreaming = true;
+    }
+  }
+  if (currentRound) rounds.push(currentRound);
+
+  if (status === "running" && currentRound) {
+    currentRound.isStreaming = true;
+  }
+
+  for (const round of rounds) {
+    if (round.isStreaming) {
+      if (!window.roundTimers.has(round.id)) {
+         window.roundTimers.set(round.id, { start: Date.now(), end: null });
+      }
+    } else {
+      if (window.roundTimers.has(round.id)) {
+         let t = window.roundTimers.get(round.id);
+         if (!t.end) t.end = Date.now();
+      } else {
+         window.roundTimers.set(round.id, { start: Date.now(), end: Date.now() });
+      }
+    }
+  }
+
+  const currentNodes = Array.from(els.messageList.children);
+
+  for (let i = 0; i < rounds.length; i++) {
+    const round = rounds[i];
+    
+    let timerText = "";
+    const t = window.roundTimers.get(round.id);
+    if (t) {
+       const ms = (t.end || Date.now()) - t.start;
+       timerText = formatDuration(ms);
+    }
+    
+    const sig = JSON.stringify(round) + timerText;
+    
+    let node = currentNodes[i];
+    if (node && node.dataset.sig === sig) continue;
+    
+    let userHtml = "";
+    if (round.userMsg) {
+      userHtml = `<div class="message user">${escapeHtml(round.userMsg.content)}</div>`;
+    }
+    
+    let processingHtml = "";
+    let formalHtml = "";
+    
+    for (let j = 0; j < round.assistantMsgs.length; j++) {
+      const msg = round.assistantMsgs[j];
+      const isLastMsg = j === round.assistantMsgs.length - 1;
+      const isIntermediate = !isLastMsg || (msg.tool_calls && msg.tool_calls.length > 0) || round.isStreaming;
+
+      if (msg.role === "tool") {
+        const contentStr = String(msg.content || "");
+        processingHtml += `<details class="process-item tool-result-item"><summary style="cursor:pointer; font-weight:bold;">🔧 工具返回完成 (点击展开详情)</summary><div class="tool-details-content" style="margin-top: 8px; padding: 8px; background: var(--surface); border-radius: 4px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; font-size: 11px;">${escapeHtml(contentStr)}</div></details>`;
+      } else if (msg.role === "assistant") {
+        const text = String(msg.content || "");
+        if (text || msg.blocks) {
+          const blocks = msg.blocks || (text ? [{type: "text", content: text}] : []);
+          const res = renderAssistantBlocks(blocks, isIntermediate);
+          processingHtml += res.processingHtml;
+          formalHtml += res.formalHtml;
+        }
+        if (msg.tool_calls && msg.tool_calls.length) {
+          for (const call of msg.tool_calls) {
+            const argsStr = call.args ? (typeof call.args === 'string' ? call.args : JSON.stringify(call.args, null, 2)) : "";
+            processingHtml += `<details class="process-item tool-call-item"><summary style="cursor:pointer; font-weight:bold;">🚀 正在调用工具: ${escapeHtml(call.name)}</summary><div class="tool-details-content" style="margin-top: 8px; padding: 8px; background: var(--surface); border-radius: 4px; white-space: pre-wrap; font-size: 11px;">${escapeHtml(argsStr)}</div></details>`;
+          }
+        }
+      } else if (msg.role === "system_status") {
+        processingHtml += `<div class="process-item system-status-item">
+          <svg viewBox="0 0 50 50" class="spin-svg" style="width: 14px; height: 14px; margin-right: 6px; vertical-align: middle; animation: spin 1s linear infinite;">
+             <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="6" stroke-dasharray="31.4 31.4" stroke-linecap="round"></circle>
+          </svg>
+          ${escapeHtml(msg.content)}...
+        </div>`;
+      }
+    }
+
+    let assistantHtml = "";
+    if (processingHtml || formalHtml || round.isStreaming) {
+      let detailsHtml = "";
+      if (processingHtml || round.isStreaming) {
+        const summaryText = round.isStreaming ? `${processingText}... (${timerText})` : `已处理 (${timerText})`;
+        detailsHtml = `
+          <details class="assistant-process-details chat-think-details" ${round.isStreaming ? 'open data-streaming="true"' : ''}>
+            <summary class="chat-think-summary">
+              <svg viewBox="0 0 50 50" class="spin-svg" style="width: 14px; height: 14px; margin-right: 6px; vertical-align: middle; ${!round.isStreaming ? 'display: none;' : 'animation: spin 1s linear infinite;'}">
+                 <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="6" stroke-dasharray="31.4 31.4" stroke-linecap="round"></circle>
+              </svg>
+              ${escapeHtml(summaryText)}
+            </summary>
+            <div class="assistant-process-content chat-think-content">
+              ${processingHtml}
+              ${round.isStreaming && !processingHtml.includes("spin-svg") ? `<div class="process-item typing-indicator" style="background: transparent; padding: 4px 8px; display: flex; align-items: center; gap: 4px; color: var(--primary);"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>` : ''}
+            </div>
+          </details>
+        `;
+      }
+      
+      let formalContainerHtml = "";
+      if (formalHtml) {
+        formalContainerHtml = `<div class="assistant-formal-reply">${formalHtml}</div>`;
+      }
+      
+      assistantHtml = `<div class="message assistant chat-round-assistant" style="background: transparent; border: none; padding: 0; box-shadow: none;">
+        ${detailsHtml}
+        ${formalContainerHtml}
+      </div>`;
+    }
+    
+    let inner = userHtml + assistantHtml;
+
+    if (!node) {
+      node = document.createElement("div");
+      node.className = "chat-round";
+      els.messageList.appendChild(node);
+    }
+
+    const existingWidgets = new Map();
+    node.querySelectorAll(".chat-widget").forEach(w => {
+      if (w.dataset.hydrated) existingWidgets.set(w.dataset.widget, w);
+    });
+    
+    const existingDetails = [];
+    node.querySelectorAll("details.chat-think-details").forEach(d => {
+      const content = d.querySelector(".assistant-process-content");
+      let scrollTop = 0;
+      let isAtBottom = true;
+      if (content) {
+        scrollTop = content.scrollTop;
+        isAtBottom = content.scrollHeight - content.scrollTop - content.clientHeight <= 10;
+      }
+      existingDetails.push({ open: d.open, wasStreaming: d.dataset.streaming === "true", scrollTop, isAtBottom });
+    });
+
+    node.dataset.sig = sig;
+    node.innerHTML = inner;
+
+    node.querySelectorAll("details.chat-think-details").forEach((d, index) => {
+      const isStreamingNow = d.dataset.streaming === "true";
+      if (index < existingDetails.length) {
+        const state = existingDetails[index];
+        if (state.wasStreaming && !isStreamingNow) {
+          // just finished
+        } else {
+          if (state.open) d.setAttribute("open", "");
+          else d.removeAttribute("open");
+        }
+        
+        const content = d.querySelector(".assistant-process-content");
+        if (content) {
+          if (state.isAtBottom) {
+            content.scrollTop = content.scrollHeight;
+          } else {
+            content.scrollTop = state.scrollTop;
+          }
+        }
+      } else {
+        const content = d.querySelector(".assistant-process-content");
+        if (content) content.scrollTop = content.scrollHeight;
+      }
+    });
+
+    node.querySelectorAll(".chat-widget").forEach(w => {
+      const saved = existingWidgets.get(w.dataset.widget);
+      if (saved) w.parentNode.replaceChild(saved, w);
+    });
+
+    hydrateWidgets(node);
+  }
+
+  for (let i = rounds.length; i < currentNodes.length; i++) {
+    if (currentNodes[i] && currentNodes[i].parentNode) {
+      currentNodes[i].parentNode.removeChild(currentNodes[i]);
+    }
+  }
+
+  if (isAtBottom) els.messageList.scrollTop = els.messageList.scrollHeight;
 }
 
 function hydrateWidgets(root) {
   root.querySelectorAll(".chat-widget").forEach((placeholder) => {
+    if (placeholder.dataset.hydrated) return;
+    
     let config;
     try {
       config = JSON.parse(placeholder.dataset.widget || "{}");
@@ -471,6 +760,7 @@ function hydrateWidgets(root) {
     const renderer = WIDGET_RENDERERS[config.widget_type] || renderUnknownWidget;
     try {
       renderer(placeholder, config.props || {}, config);
+      placeholder.dataset.hydrated = "true";
     } catch (error) {
       console.error(`Failed to render widget "${config.widget_type}"`, error);
       placeholder.classList.add("chat-widget-error");
@@ -516,8 +806,54 @@ function createWidgetCard(placeholder, { title, icon, fullscreen = false } = {})
   placeholder.appendChild(card);
   return { card, header, body };
 }
+const activeMapInstances = [];
+const MAX_ACTIVE_MAPS = 8;
 
-function renderMapWidget(placeholder, props) {
+function enforceMapContextLimit() {
+  // Clean up maps that are no longer in the DOM
+  for (let i = activeMapInstances.length - 1; i >= 0; i--) {
+    if (!document.body.contains(activeMapInstances[i].mapEl)) {
+      try {
+        if (activeMapInstances[i].map) activeMapInstances[i].map.remove();
+      } catch (e) {}
+      activeMapInstances.splice(i, 1);
+    }
+  }
+
+  while (activeMapInstances.length > MAX_ACTIVE_MAPS) {
+    const oldest = activeMapInstances.shift();
+    try {
+      if (oldest.map) {
+        oldest.map.remove();
+        oldest.map = null;
+      }
+    } catch (e) {
+      console.error("Failed to remove oldest map context", e);
+    }
+    
+    oldest.mapEl.innerHTML = "";
+    oldest.mapEl.className = "widget-map widget-map-suspended";
+    
+    const overlay = document.createElement("div");
+    overlay.className = "widget-map-overlay";
+    overlay.textContent = "为了节省系统资源，此地图已被暂时挂起。";
+    
+    const btn = document.createElement("button");
+    btn.className = "widget-map-reactivate-btn";
+    btn.textContent = "点击重新激活";
+    btn.onclick = () => {
+      oldest.mapEl.innerHTML = "";
+      oldest.mapEl.className = "widget-map";
+      // This will recursively add it back to activeMapInstances and enforce limit again
+      renderMapInstance(oldest.placeholder, oldest.mapEl, oldest.props);
+    };
+    
+    oldest.mapEl.appendChild(overlay);
+    oldest.mapEl.appendChild(btn);
+  }
+}
+
+function renderMapWidget(placeholder, props, config) {
   const { body } = createWidgetCard(placeholder, { title: "地图", icon: "fa-solid fa-map-location-dot", fullscreen: true });
   const mapEl = document.createElement("div");
   mapEl.className = "widget-map";
@@ -528,41 +864,105 @@ function renderMapWidget(placeholder, props) {
     return;
   }
 
-  const token = props.access_token || mapboxAccessToken;
+  // Handle use_stored_card
+  let actualProps = { ...props };
+  if (props.use_stored_card && config && config.id && currentState && Array.isArray(currentState.map_cards)) {
+    const storedCard = currentState.map_cards.find(c => c.id === config.id);
+    if (storedCard) {
+      actualProps = { ...actualProps, ...storedCard };
+    }
+  }
+
+  const token = actualProps.access_token || mapboxAccessToken;
   if (!token) {
-    // Token may load asynchronously after the message renders; retry once ready.
     mapEl.className = "widget-map widget-map-pending";
     mapEl.textContent = "正在加载地图…（未配置 Mapbox Access Token）";
     pendingMapWidgets.push(() => {
-      if (mapEl.isConnected && (props.access_token || mapboxAccessToken)) {
+      if (mapEl.isConnected && (actualProps.access_token || mapboxAccessToken)) {
         mapEl.className = "widget-map";
         mapEl.textContent = "";
-        renderMapInstance(placeholder, mapEl, props);
+        renderMapInstance(placeholder, mapEl, actualProps);
       }
     });
     return;
   }
 
-  renderMapInstance(placeholder, mapEl, props);
+  renderMapInstance(placeholder, mapEl, actualProps);
 }
 
 function renderMapInstance(placeholder, mapEl, props) {
   mapboxgl.accessToken = props.access_token || mapboxAccessToken;
 
+  const points = Array.isArray(props.points) ? props.points : (Array.isArray(props.markers) ? props.markers : []);
+  const lines = Array.isArray(props.lines) ? props.lines : [];
+  const geojsonData = props.geojson;
+
+  // Auto fit bounds
+  const bounds = new mapboxgl.LngLatBounds();
+  let hasElements = false;
+
+  points.forEach((pt) => {
+    const lat = Number(pt.lat ?? pt.latitude);
+    const lng = Number(pt.lng ?? pt.longitude);
+    if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+      bounds.extend([lng, lat]);
+      hasElements = true;
+    }
+  });
+
+  lines.forEach((line) => {
+    (line.coordinates || []).forEach(coord => {
+      if (coord && coord.length >= 2) {
+        bounds.extend([coord[0], coord[1]]); // Mapbox is [lng, lat]
+        hasElements = true;
+      }
+    });
+  });
+
+  if (geojsonData) {
+    // A simple recursive search for coordinates in GeoJSON
+    const findCoords = (obj) => {
+      if (!obj) return;
+      if (Array.isArray(obj)) {
+        if (obj.length === 2 && typeof obj[0] === 'number' && typeof obj[1] === 'number') {
+          bounds.extend([obj[0], obj[1]]);
+          hasElements = true;
+        } else {
+          obj.forEach(findCoords);
+        }
+      } else if (typeof obj === 'object') {
+        Object.values(obj).forEach(findCoords);
+      }
+    };
+    findCoords(geojsonData);
+  }
+
+  const mapOptions = {
+    container: mapEl,
+    style: props.style || "mapbox://styles/mapbox/streets-v12",
+    projection: "mercator",
+  };
+
   const center = props.center || {};
-  const lat = Number(center.lat ?? 0);
-  const lng = Number(center.lng ?? 0);
+  const lat = Number(center.lat ?? center.latitude ?? 0);
+  const lng = Number(center.lng ?? center.longitude ?? 0);
   const zoom = Number(props.zoom ?? 10);
-  const style = props.style || "mapbox://styles/mapbox/streets-v12";
+
+  // If there are elements to fit, and the user didn't explicitly specify a zoom, fit bounds.
+  // Actually, just fit bounds if we have elements, it's almost always what we want.
+  if (hasElements) {
+    mapOptions.bounds = bounds;
+    mapOptions.fitBoundsOptions = { padding: 40, maxZoom: 15 };
+  } else {
+    mapOptions.center = [lng, lat];
+    mapOptions.zoom = zoom;
+  }
 
   let map;
   try {
-    map = new mapboxgl.Map({
-      container: mapEl,
-      style,
-      center: [lng, lat],
-      zoom,
-    });
+    map = new mapboxgl.Map(mapOptions);
+    activeMapInstances.push({ map, placeholder, mapEl, props });
+    enforceMapContextLimit();
   } catch (error) {
     mapEl.className = "widget-map widget-map-pending";
     mapEl.textContent = `地图加载失败：${error.message}`;
@@ -571,25 +971,97 @@ function renderMapInstance(placeholder, mapEl, props) {
 
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
 
-  const markers = Array.isArray(props.markers) ? props.markers : [];
-  markers.forEach((marker) => {
-    const mLat = Number(marker.lat);
-    const mLng = Number(marker.lng);
+  map.on('load', () => {
+    // Add geojson if present
+    if (geojsonData) {
+      map.addSource('geojson-data', {
+        type: 'geojson',
+        data: geojsonData
+      });
+      
+      // Render polygons
+      map.addLayer({
+        id: 'geojson-fill',
+        type: 'fill',
+        source: 'geojson-data',
+        paint: {
+          'fill-color': '#088',
+          'fill-opacity': 0.4
+        },
+        filter: ['==', '$type', 'Polygon']
+      });
+
+      // Render lines/borders
+      map.addLayer({
+        id: 'geojson-line',
+        type: 'line',
+        source: 'geojson-data',
+        paint: {
+          'line-color': '#088',
+          'line-width': 3
+        },
+        filter: ['in', '$type', 'Polygon', 'LineString']
+      });
+    }
+
+    // Add lines
+    lines.forEach((line, idx) => {
+      const sourceId = `line-source-${idx}`;
+      map.addSource(sourceId, {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: line.coordinates
+          }
+        }
+      });
+      map.addLayer({
+        id: `line-layer-${idx}`,
+        type: 'line',
+        source: sourceId,
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': line.color || '#f97316',
+          'line-width': 4
+        }
+      });
+    });
+  });
+
+  // Add points
+  points.forEach((pt) => {
+    const mLat = Number(pt.lat ?? pt.latitude);
+    const mLng = Number(pt.lng ?? pt.longitude);
     if (Number.isNaN(mLat) || Number.isNaN(mLng)) return;
-    const mapMarker = new mapboxgl.Marker().setLngLat([mLng, mLat]);
-    if (marker.label) {
-      mapMarker.setPopup(new mapboxgl.Popup({ offset: 24 }).setText(String(marker.label)));
+
+    const el = document.createElement("div");
+    el.className = "custom-map-marker";
+    el.style.width = "14px";
+    el.style.height = "14px";
+    el.style.borderRadius = "50%";
+    el.style.backgroundColor = pt.color || "#2563eb";
+    el.style.border = "2px solid #ffffff";
+    el.style.boxShadow = "0 1px 3px rgba(0, 0, 0, 0.4)";
+    el.style.cursor = "pointer";
+
+    if (pt.label) el.title = pt.label;
+    const mapMarker = new mapboxgl.Marker(el).setLngLat([mLng, mLat]);
+
+    if (pt.label || pt.description) {
+      const popupHTML = `<strong>${escapeHtml(pt.label || '点')}</strong>${pt.description ? `<br/>${escapeHtml(pt.description)}` : ''}`;
+      const popup = new mapboxgl.Popup({ offset: 10, closeButton: false, closeOnClick: false }).setHTML(popupHTML);
+
+      el.addEventListener("mouseenter", () => popup.setLngLat([mLng, mLat]).addTo(map));
+      el.addEventListener("mouseleave", () => popup.remove());
     }
     mapMarker.addTo(map);
   });
-
-  const refresh = () => map.resize();
-  setTimeout(refresh, 0);
-  placeholder.addEventListener("fullscreenchange", () => setTimeout(refresh, 0));
-  document.addEventListener("fullscreenchange", refresh);
-  if (window.ResizeObserver) {
-    new ResizeObserver(refresh).observe(mapEl);
-  }
 }
 
 function renderWeatherWidget(placeholder, props) {
@@ -1267,6 +1739,7 @@ function routeLabel(route) {
     START: "START",
     orchestrator: "Orchestrator",
     agent: "Agent",
+    network_specialist_agent: "Network Specialist Agent",
     tools: "Tools",
     memory: "Memory",
     evaluate: "Evaluator",
@@ -1336,6 +1809,7 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels, llmActiveNode)
     S: mermaidNodeClass("START", active, visited),
     O: mermaidNodeClass("orchestrator", active, visited),
     A: mermaidNodeClass("agent", active, visited),
+    N: mermaidNodeClass("network_specialist_agent", active, visited),
     E: mermaidNodeClass("evaluate", active, visited),
     X: mermaidNodeClass("END", active, visited),
     T: mermaidNodeClass("tools", active, visited),
@@ -1351,6 +1825,8 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels, llmActiveNode)
     ["orchestrator->memory", "O", "M", "solid"],
     ["memory->agent", "M", "A", "solid"],
     ["agent->memory", "A", "M", "solid"],
+    ["memory->network_specialist_agent", "M", "N", "solid"],
+    ["network_specialist_agent->memory", "N", "M", "solid"],
     ["memory->tools", "M", "T", "dotted"],
     ["tools->memory", "T", "M", "dotted"],
     ["memory->orchestrator", "M", "O", "solid"],
@@ -1362,6 +1838,7 @@ function buildRouteMermaidDefinition(active, visited, edgeLabels, llmActiveNode)
     S: 'S(["START"])',
     O: 'O["Orchestrator"]',
     A: 'A["Agent"]',
+    N: 'N["Network Specialist Agent"]',
     E: 'E["Evaluator"]',
     X: 'X(["END"])',
     T: 'T["Tools"]',
@@ -1645,29 +2122,62 @@ function renderRoutes(state) {
   renderMermaidRouteDiagram(mermaidDefinition, renderVersion);
 }
 
-function renderState(state) {
+let renderStreamTimeout = null;
+function queueRenderStream() {
+  if (renderStreamTimeout) return;
+  renderStreamTimeout = setTimeout(() => {
+    renderStreamTimeout = null;
+    const status = currentState.status || "idle";
+    renderMessages(currentState.messages || [], status, currentState.model_output);
+  }, 50);
+}
+
+let timerInterval = null;
+
+function renderState(state, isStream = false) {
   currentState = { ...currentState, ...(state || {}) };
   state = currentState;
   const status = state.status || "idle";
-  setBadge(els.statusBadge, statusLabel(status), status);
-  const node = state.current_node || "-";
-  setBadge(els.nodeBadge, node === "-" ? "无节点" : node, node === "-" ? "neutral" : "running");
-  els.currentNodeValue.textContent = node;
-  els.complexityValue.textContent = state.task_complexity || "unknown";
-  els.stopBtn.disabled = status !== "running";
-  els.sendBtn.disabled = status === "running" || status === "awaiting_approval";
-  els.messageInput.disabled = status === "running" || status === "awaiting_approval";
-  if (els.saveModelConfigBtn) {
-    els.saveModelConfigBtn.disabled = status === "running" || status === "awaiting_approval";
+  
+  if (status === "running") {
+    if (!timerInterval) {
+      timerInterval = setInterval(() => {
+        queueRenderStream();
+      }, 1000);
+    }
+  } else {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
   }
-  els.modelOutput.innerHTML = renderModelOutput(state.model_output || "");
-  els.modelOutput.scrollTop = els.modelOutput.scrollHeight;
 
-  renderMessages(state.messages || []);
-  renderEvents(state.events || []);
-  renderApprovals(state.world_state?.pending_approvals || []);
-  renderTodos(state.todo_list || []);
-  renderRoutes(state);
+  if (!isStream) {
+    setBadge(els.statusBadge, statusLabel(status), status);
+    const node = state.current_node || "-";
+    setBadge(els.nodeBadge, node === "-" ? "无节点" : node, node === "-" ? "neutral" : "running");
+    els.currentNodeValue.textContent = node;
+    els.complexityValue.textContent = state.task_complexity || "unknown";
+    els.stopBtn.disabled = status !== "running";
+    els.sendBtn.disabled = status === "running" || status === "awaiting_approval";
+    els.messageInput.disabled = status === "running" || status === "awaiting_approval";
+    if (els.saveModelConfigBtn) {
+      els.saveModelConfigBtn.disabled = status === "running" || status === "awaiting_approval";
+    }
+  }
+
+  if (isStream) {
+    queueRenderStream();
+  } else {
+    renderMessages(state.messages || [], status, state.model_output);
+  }
+  
+  if (!isStream) {
+    renderEvents(state.events || []);
+    renderApprovals(state.world_state?.pending_approvals || []);
+    renderTodos(state.todo_list || []);
+    renderRoutes(state);
+  }
 }
 
 function sessionHeaders() {
@@ -1714,11 +2224,42 @@ function connectWs() {
     setBadge(els.connectionBadge, "已连接", "success");
   });
 
+let streamBuffer = "";
+  let streamTimeout = null;
+
   ws.addEventListener("message", (message) => {
     try {
       const payload = JSON.parse(message.data);
       if (payload.state) {
         renderState(payload.state);
+      } else if (payload.type === "stream") {
+        let textToAppend = payload.content || "";
+        if (payload.token_type === "thinking") {
+            const currentText = (currentState.model_output || "") + streamBuffer;
+            const lastThink = currentText.lastIndexOf("<think>");
+            const lastThinkClose = currentText.lastIndexOf("</think>");
+            const isThinkOpen = (lastThink !== -1) && (lastThinkClose === -1 || lastThink > lastThinkClose);
+            if (!isThinkOpen) {
+                textToAppend = "<think>" + textToAppend;
+            }
+        } else if (payload.token_type === "content") {
+            const currentText = (currentState.model_output || "") + streamBuffer;
+            const lastThink = currentText.lastIndexOf("<think>");
+            const lastThinkClose = currentText.lastIndexOf("</think>");
+            const isThinkOpen = (lastThink !== -1) && (lastThinkClose === -1 || lastThink > lastThinkClose);
+            if (isThinkOpen) {
+                textToAppend = "</think>" + textToAppend;
+            }
+        }
+        
+        streamBuffer += textToAppend;
+        if (!streamTimeout) {
+          streamTimeout = setTimeout(() => {
+            renderState({ model_output: (currentState.model_output || "") + streamBuffer }, true);
+            streamBuffer = "";
+            streamTimeout = null;
+          }, 200);
+        }
       }
     } catch (error) {
       console.error("Failed to render websocket update", error);
@@ -1866,11 +2407,19 @@ els.eventList.addEventListener("click", (event) => {
   } else {
     expandedEvents.add(eventId);
   }
-  loadState();
+  renderEvents(currentState.events || []);
 });
 
 initializeProgressSplitResizer();
 loadWebConfig();
 loadModelConfig();
 loadState();
+
+if (els.toggleRuntimeBtn) {
+  els.toggleRuntimeBtn.addEventListener("click", () => {
+    els.workspace.classList.toggle("runtime-collapsed");
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+  });
+}
+
 connectWs();

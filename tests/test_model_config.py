@@ -30,11 +30,13 @@ class ModelConfigTests(unittest.TestCase):
 
 
     def test_provider_defaults_include_requested_models_and_urls(self):
-        settings = config.normalize_llm_settings({"provider": "deepseek", "base_url": ""})
+        with patch.dict(os.environ, {"LLM_PROVIDER": "openai", "LLM_MODEL_NAME": "gpt-4o-mini"}, clear=False):
+            settings = config.normalize_llm_settings({"provider": "deepseek", "base_url": ""})
         self.assertEqual(settings["model_name"], "deepseek-v4-flash")
         self.assertEqual(settings["base_url"], "https://api.deepseek.com/v1")
 
-        settings = config.normalize_llm_settings({"provider": "llamacpp", "base_url": ""})
+        with patch.dict(os.environ, {"LLM_PROVIDER": "openai", "LLM_MODEL_NAME": "gpt-4o-mini"}, clear=False):
+            settings = config.normalize_llm_settings({"provider": "llamacpp", "base_url": ""})
         self.assertEqual(settings["model_name"], "qwen3.6:latest")
         self.assertEqual(settings["base_url"], "http://isc.ai.huawei.com:11434/v1")
 

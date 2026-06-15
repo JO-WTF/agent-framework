@@ -6,6 +6,7 @@
 
 - `app/nodes/orchestrator.py`
 - `app/nodes/common.py`
+- `app/agents/contracts.py`
 - `config/prompts.yaml` 的 `orchestrator`
 - `app/memory/store.py` 的 context tag 工具函数
 
@@ -18,6 +19,7 @@ Orchestrator 负责：
 - 判断任务复杂度：`simple` / `complex`。
 - 为复杂任务生成和更新分级 `todo_list`。
 - 识别当前任务需要的 `context_tags`。
+- 根据 Agent contract 理解各 agent 的职责、能力边界和不可做事项。
 - 给出期望下一步：`agent` 或 `evaluate`。
 - 记录自己的 prompt、原始输出和可选 reasoning 内容，供 Web UI 调试。
 
@@ -27,6 +29,7 @@ Orchestrator 不负责：
 - 执行工具。
 - 修复工具参数。
 - 判断最终回答内容是否合格。
+- 提前指定专业 Agent 的实现库、文件格式或具体工具，除非用户明确要求。
 
 设计意图是把“任务管理”从 Brain 中拆出。Brain 更擅长做下一步推理和行动，Orchestrator 更适合维护任务计划和状态。
 
@@ -45,6 +48,7 @@ system_prompt = get_system_prompt("orchestrator", context_tags=initial_context_t
 - 可选上下文标签。
 - 当前动态上下文标签由 system prompt 的 `【动态上下文标签】` 提供，user prompt 不重复携带。
 - 当前 `todo_list` JSON。
+- Agent 能力边界与计划约束，来自 `app/agents/contracts.py`。
 - 最近消息摘要。
 
 这样 Orchestrator 每次都能基于“旧计划 + 新证据”更新状态，而不是从零规划。
@@ -116,6 +120,10 @@ todo item 必须包含：
 ```
 
 Brain 后续会根据这个计划选择最小可执行子任务，Evaluator 也会用它检查是否还有未完成事项。
+
+todo 应保持在意图层：描述目标、数据需求、约束和验收结果，不提前指定专业 Agent 的实现库、文件格式或具体工具，除非用户明确要求。工具和实现路线由被指派的专业 Agent 根据可用能力决定。
+
+Orchestrator 会收到结构化 Agent contract，包括每个 agent 的 `responsibilities`、`planning_boundaries`、`tool_categories` 和 `cannot`。因此 Orchestrator 应该给每个 agent 下发符合其能力边界的计划，而不是把某个 agent 无权或不擅长的事项写进 todo。
 
 ## 6. context_tags 设计
 
