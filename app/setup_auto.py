@@ -7,6 +7,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.docker_proxy import docker_build_proxy_args
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOGS_DIR = PROJECT_ROOT / "logs"
@@ -161,7 +163,16 @@ def ensure_image() -> bool:
             write_progress("image", "missing", start, {"image": image, "raw": relative(raw_log)})
             return False
         build = run_logged(
-            ["docker", "build", "-f", str(STANDARD_SANDBOX_DOCKERFILE), "-t", image, "."],
+            [
+                "docker",
+                "build",
+                *docker_build_proxy_args(),
+                "-f",
+                str(STANDARD_SANDBOX_DOCKERFILE),
+                "-t",
+                image,
+                ".",
+            ],
             raw_log,
             append=True,
         )

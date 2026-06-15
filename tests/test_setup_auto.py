@@ -16,11 +16,16 @@ class SetupAutoTests(unittest.TestCase):
             "app.setup_auto.prompt_yes_no", return_value=True
         ), patch("app.setup_auto.write_progress"), patch.object(
             setup_auto, "STANDARD_SANDBOX_DOCKERFILE", Path("Dockerfile.sandbox")
-        ), patch.dict(os.environ, {"AGENT_SANDBOX_IMAGE": ""}, clear=False):
+        ), patch.dict(
+            os.environ, {"AGENT_SANDBOX_IMAGE": "", "http_proxy": "http://proxy:8080"}, clear=True
+        ):
             self.assertTrue(setup_auto.ensure_image())
 
         build_args = run_mock.call_args_list[1].args[0]
-        self.assertEqual(build_args[:3], ["docker", "build", "-f"])
+        self.assertEqual(build_args[:2], ["docker", "build"])
+        self.assertIn("--build-arg", build_args)
+        self.assertIn("http_proxy", build_args)
+        self.assertIn("-f", build_args)
         self.assertIn("-t", build_args)
         self.assertIn(setup_auto.DEFAULT_IMAGE, build_args)
 

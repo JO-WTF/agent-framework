@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.docker_proxy import docker_run_proxy_env_args
 from app.runtime_paths import ROOT_DIR, get_session_dir
 from app.tools.context import ensure_session_id
 
@@ -292,6 +293,7 @@ class DockerSandboxRuntime:
             "--tmpfs",
             "/workspace/shared:rw,nosuid,nodev,size=1m",
         ]
+        args.extend(docker_run_proxy_env_args())
         args.extend([
             "-v",
             f"{self.work_dir}:/workspace/work:rw",
