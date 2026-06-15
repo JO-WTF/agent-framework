@@ -22,12 +22,19 @@ class AgentState(TypedDict):
     task_complexity: NotRequired[str]
     todo_list: NotRequired[list[dict[str, Any]]]
     context_tags: NotRequired[list[str]]
+    active_skills: NotRequired[list[str]]
     world_state: NotRequired[dict[str, Any]]
+    memory_proposals: NotRequired[list[dict[str, Any]]]
+    task_ledger: NotRequired[dict[str, Any]]
     last_node: NotRequired[str]
+    agent_role: NotRequired[str]  # Active specialized agent role
     orchestrator_next: NotRequired[str]
     orchestrator_think: NotRequired[str]
     orchestrator_message: NotRequired[str]
     orchestrator_prompt: NotRequired[list[dict[str, str]]]
+    evaluator_think: NotRequired[str]
+    evaluator_message: NotRequired[str]
+    evaluator_prompt: NotRequired[list[dict[str, str]]]
 ```
 
 ## 3. 字段读写约定
@@ -41,8 +48,10 @@ class AgentState(TypedDict):
 | `task_complexity` | Orchestrator | Brain、Evaluator、Memory | `simple` / `complex` / `unknown`。 |
 | `todo_list` | Orchestrator | Brain、Evaluator、Memory、Web | 分级 todo，不要无故删除已有项。 |
 | `context_tags` | Orchestrator | Common prompt、Memory、Web | 最多 4 个，来自已知标签集合。 |
+| `active_skills` | Orchestrator | Common prompt | 被激活的技能标签。 |
 | `world_state` | Memory Manager | Brain、Evaluator、Web | 已固化事实板，不放完整大输出。 |
 | `last_node` | Orchestrator、Agent、Tools、Evaluator | Memory Manager | 路由关键字段，每个主节点必须设置。 |
+| `agent_role` | Orchestrator | Memory Manager、Web | 决定分配哪个具体的专长 Agent（如 `general`, `network`）。 |
 | `orchestrator_next` | Orchestrator | Memory Manager、Web | `agent` 或 `evaluate`，代码层仍会校正。 |
 | `orchestrator_think` | Orchestrator | Web/debug | 仅观察，不参与路由。 |
 | `orchestrator_message` | Orchestrator | Web/debug | 原始 JSON 输出文本。 |

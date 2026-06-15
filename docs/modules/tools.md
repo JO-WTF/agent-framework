@@ -22,26 +22,34 @@
 | 工具 | 文件 | 用途 |
 | --- | --- | --- |
 | `search_web(query)` | `app/tools/search.py` | 通过 Tavily 获取联网检索结果，最多 3 条摘要。 |
-| `read_webpage(url, max_chars=2400, include_tables=False, headers=None)` | `app/tools/webpage_reader.py` | 读取 HTML 页面并提取正文，剔除 script/style/nav/footer/header/code/pre 等噪音和代码块，完整结果归档为引用。 |
+| `read_webpage(url, max_chars=2400, include_tables=False, headers=None)` | `app/tools/webpage_reader.py` | 读取 HTML 页面并提取正文，剔除噪音并存档。 |
+| `api_request(url, method="GET", ...)` | `app/tools/api_request.py` | 直接调用 HTTP API 等资源。禁止用于网页 HTML 主体。 |
 | `list_tool_results(limit=10)` | `app/tools/tool_results.py` | 查看当前会话已归档工具结果引用。 |
 | `read_tool_result(ref_id, offset=0, limit=8000)` | `app/tools/tool_results.py` | 按引用读取完整工具结果，支持分页。 |
-| `start_sandbox()` | `app/tools/sandbox_tools.py` | 显式启动当前会话共享 Docker 容器。 |
-| `sandbox_status()` | `app/tools/sandbox_tools.py` | 查看当前会话沙箱状态，不启动容器。 |
-| `stop_sandbox()` | `app/tools/sandbox_tools.py` | 停止当前会话共享 Docker 容器。 |
-| `add_shared_mount(name, host_path, access="read")` | `app/tools/sandbox_tools.py` | 为访问本地系统目录创建前端审批申请，支持 read (只读) 与 write (读写)；Windows 原生路径也走同一机制。 |
-| `apply_sandbox_file(source_path, target_path, overwrite=False)` | `app/tools/sandbox_tools.py` | 为 `/workspace/work` 内的单个文件创建写回审批申请，目标支持 `repo://...` 和 `shared://<name>/...`。 |
-| `run_python(code)` | `app/tools/python_runner.py` | 在当前会话 Docker 沙箱中执行 Python 代码。 |
-| `run_command(command)` | `app/tools/command_runner.py` | 在当前会话 Docker 沙箱中执行 shell 命令。 |
-| `save_skill_sop(name, description, tags, instructions)` | `app/tools/skills.py` | 保存或覆盖带 YAML frontmatter 的技能 SOP Markdown 文件。 |
-| `list_skills()` | `app/tools/skills.py` | 列出当前技能库中的 SOP 名称、描述和标签。 |
-| `get_skill_sop(name)` | `app/tools/skills.py` | 读取指定技能 SOP 的完整 Markdown 内容。 |
-| `delete_skill_sop(name)` | `app/tools/skills.py` | 删除指定技能 SOP 文件。 |
-| `api_request(url, method="GET", headers=None, data=None)` | `app/tools/api_request.py` | 直接调用 HTTP/HTTPS API、JSON/纯文本/非 HTML 资源或调试原始响应。禁止用于网页 HTML 主体；HTML 响应会被拒绝并提示使用 `read_webpage()`。 |
+| `start_sandbox() / stop_sandbox() / sandbox_status()` | `app/tools/sandbox_tools.py` | 管理当前会话的共享 Docker 容器。 |
+| `add_shared_mount(...) / apply_sandbox_file(...)` | `app/tools/sandbox_tools.py` | 创建读写挂载或写回沙箱文件的审批申请。 |
+| `run_python(code)` | `app/tools/python_runner.py` | 在 Docker 沙箱中执行 Python 代码。 |
+| `run_command(command)` | `app/tools/command_runner.py` | 在 Docker 沙箱中执行 shell 命令。 |
+| `save_skill_sop / list_skills / get_skill_sop / delete_skill_sop` | `app/tools/skills.py` | 管理技能库与 SOP 文件。 |
+| `geocode_address / reverse_geocode / get_administrative_regions / ...` | `app/tools/geo.py / geocoding.py` | 处理经纬度解析、行政区划、附近 POI 和路线计算。 |
+| `render_map_card(...)` | `app/tools/map_card.py` | 生成前端专用的基于 ```widget 标识符的交互式地图展示代码。 |
 
-`AGENT_TOOLS` 是唯一注册表：
+工具根据类别（`TOOL_CATEGORIES`）组织：
 
 ```python
-AGENT_TOOLS = [search_web, read_webpage, start_sandbox, sandbox_status, stop_sandbox, add_shared_mount, apply_sandbox_file, list_tool_results, read_tool_result, run_python, run_command, save_skill_sop, list_skills, delete_skill_sop, get_skill_sop, api_request]
+TOOL_CATEGORIES = {
+    "search": [search_web, fetch_url, read_webpage, api_request],
+    "sandbox_control": [start_sandbox, sandbox_status, stop_sandbox],
+    "sandbox_approval": [add_shared_mount_tool, apply_sandbox_file],
+    "results": [list_tool_results, read_tool_result, store_data],
+    "execution": [run_python, run_command],
+    "skills": [save_skill_sop, list_skills, delete_skill_sop, get_skill_sop],
+    "geo": [geocode_address, reverse_geocode, get_administrative_regions, ...],
+    "visualization": [render_map_card],
+}
+
+GENERAL_AGENT_TOOLS = tools_for_categories(GENERAL_AGENT_TOOL_CATEGORIES)
+NETWORK_SPECIALIST_TOOLS = tools_for_categories(NETWORK_SPECIALIST_TOOL_CATEGORIES)
 ```
 
 新增工具时至少要改三处：
@@ -183,7 +191,20 @@ ModuleNotFoundError: No module named 'pandas'
 - 如果模型需要继续阅读，必须通过 `read_tool_result(ref_id, offset, limit)` 分页读取，不要重新用 `api_request` 拉整页 HTML。
 - 主提取器是 `trafilatura`；未安装时自动使用内置 HTML parser fallback。
 
-`api_request()` 有硬性边界：当 GET 响应是 `text/html`、`application/xhtml+xml`，或内容看起来是 HTML 文档时，不返回也不归档 HTML 主体，只返回错误提示并要求改用 `read_webpage()`。这样避免网页源码进入 LLM 上下文。
+`api_request()` 有硬性边界：当 GET 响应是 `text/html` 时，不返回也不归档 HTML 主体，只返回错误提示要求改用 `read_webpage()`。
+
+### 8.1 结构化工具输出 (StructuredToolResult)
+
+大部分工具只需返回字符串。但当工具需要向前端/系统层传输“后台结构数据”，同时向 LLM 呈现“精简自然语言”时，使用 `StructuredToolResult`：
+
+```python
+return StructuredToolResult(
+    system_content="LLM 看到的简洁提示：已渲染地图代码，请原封不动返回 ```widget ... ```",
+    ui_data={"widget_type": "map", "data": ...}
+)
+```
+
+`tool_execution_subgraph` 提取 `system_content` 给主图 LLM 读取，而把 `ui_data` 作为后台元数据供 Web 前端解析（比如保存地理边界 JSON，而不让大量坐标数据占用 LLM context）。
 
 当工具返回类似：
 

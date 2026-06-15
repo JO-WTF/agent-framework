@@ -20,9 +20,9 @@
 flowchart LR
     START --> O["orchestrator"]
     O --> M["memory"]
-    A["agent"] --> M
+    A["agent\nnetwork_specialist_agent"] --> M
     T["tools"] --> M
-    M -->|"agent"| A
+    M -->|"agent\nnetwork_specialist_agent"| A
     M -->|"tools"| T
     M -->|"orchestrator"| O
     M -->|"evaluate"| E["evaluate"]
@@ -36,6 +36,7 @@ flowchart LR
 workflow.add_edge(START, "orchestrator")
 workflow.add_edge("orchestrator", "memory")
 workflow.add_edge("agent", "memory")
+workflow.add_edge("network_specialist_agent", "memory")
 workflow.add_edge("tools", "memory")
 workflow.add_conditional_edges("memory", route_after_memory, ...)
 workflow.add_conditional_edges("evaluate", route_after_evaluation, ...)
@@ -62,8 +63,8 @@ workflow.add_conditional_edges("evaluate", route_after_evaluation, ...)
 
 | 来源 | 最后一条消息 | 正确下一跳 |
 | --- | --- | --- |
-| `agent` | `AIMessage` 且有 `tool_calls` | `tools` |
-| `agent` | `AIMessage` 且无 `tool_calls` | `orchestrator` |
+| `agent` / `network_specialist_agent` | `AIMessage` 且有 `tool_calls` | `tools` |
+| `agent` / `network_specialist_agent` | `AIMessage` 且无 `tool_calls` | `orchestrator` |
 | `tools` | `ToolMessage` | `orchestrator` |
 | `orchestrator` | 任意非最终可质检状态 | `agent` |
 

@@ -84,7 +84,7 @@ TAVILY_API_KEY=...
 - 第一次 `run_command` 或 `run_python` 需要执行时才启动容器。
 - 同一会话后续工具调用通过 `docker exec` 进入同一个容器。
 - 首次执行命令或 Python 代码前会自动创建 `/workspace/work/venv`；该 venv 继承标准镜像依赖，额外安装的包写入可写工作目录；`run_command` 默认激活该 venv，`run_python` 默认使用该 venv 的 Python。
-- 容器默认开启网络，便于访问公网资源。
+- 容器默认开启网络，便于访问公网资源。如果宿主机配置了代理环境变量（如 `http_proxy`、`https_proxy`、`no_proxy`），`setup_auto.py` 构建沙箱镜像及 `sandbox.py` 启动容器时，都会自动将这些变量透传给 Docker，以确保沙箱内网络连通性。
 - 容器会注入允许列表中的环境变量，例如 `MAPBOX_ACCESS_TOKEN`、`MAPBOX_API_KEY`、`HERE_API_KEY`、`TAVILY_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`LLM_API_KEY`、`LLM_BASE_URL`、`REQUESTS_CA_BUNDLE`、`SSL_CERT_FILE`。需要额外变量时设置 `AGENT_SANDBOX_ENV=VAR_A,VAR_B`。
 - 环境变量变化会触发当前会话容器重建；metadata 只保存环境指纹，不保存明文 token。
 - 容器使用非 root 用户、只读根文件系统、`/tmp` tmpfs、CPU/内存/pids/超时限制。

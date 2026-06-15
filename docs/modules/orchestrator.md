@@ -10,7 +10,7 @@
 - `config/prompts.yaml` 的 `orchestrator`
 - `app/memory/store.py` 的 context tag 工具函数
 
-Orchestrator 是主图第一个节点，也是每次工具完成、Agent 阶段答复或 Evaluator 打回后的重新编排节点。
+Orchestrator 是主图第一个节点，也是每次工具完成、Agent 阶段答复或 Evaluator 打回后的重新编排节点。为了降低延迟，在满足“已收到最后自然语言答复且所有 todo 均已完成（或无 todo）”条件时，Orchestrator 采用 fast-path 直接路由到 Evaluate 节点，跳过 LLM 推理。
 
 ## 2. 职责边界
 
@@ -21,6 +21,7 @@ Orchestrator 负责：
 - 识别当前任务需要的 `context_tags`。
 - 根据 Agent contract 理解各 agent 的职责、能力边界和不可做事项。
 - 给出期望下一步：`agent` 或 `evaluate`。
+- 指派合适的 Agent 角色：`general` 或 `network`。
 - 记录自己的 prompt、原始输出和可选 reasoning 内容，供 Web UI 调试。
 
 Orchestrator 不负责：
@@ -61,6 +62,7 @@ system_prompt = get_system_prompt("orchestrator", context_tags=initial_context_t
 {
   "task_complexity": "simple 或 complex",
   "next": "agent 或 evaluate",
+  "agent_role": "general 或 network",
   "context_tags": ["general"],
   "todo_list": [
     {
